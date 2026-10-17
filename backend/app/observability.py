@@ -1,4 +1,4 @@
-"""Langfuse 全链路可观测层（架构新增）
+"""Langfuse 全链路可观测层
 
 设计：
 - 每 Agent 节点 = 1 个 langfuse generation，挂同一条 trace（session = 一次分析请求）

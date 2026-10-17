@@ -3,7 +3,7 @@
 骨架验收：
 - GET  /health         → 后端自检 200
 - GET  /ping/frontend  → 反向探测前端 :3000（骨架互相 ping 通的另一半）
-- POST /api/analyze    → 跑 LangGraph 三 Agent 流水线（stub 数据；SSE 流式 接入）
+- POST /api/analyze    → 跑 LangGraph 三 Agent 流水线（stub 数据；SSE 流式已接入）
 """
 import asyncio
 import json

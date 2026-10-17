@@ -2,7 +2,7 @@
 
 上传简历 PDF + 粘贴目标岗位 JD → 三个 Agent 协作 → 匹配度评分 + 逐段改写建议（STAR 法则，SSE 流式渲染）。
 
-![screenshot](docs/screenshot-d5-result.png)
+![screenshot](docs/screenshot-result.png)
 
 [![LangGraph](https://img.shields.io/badge/orchestration-LangGraph%20StateGraph-blue)]()
 [![MCP](https://img.shields.io/badge/tool%20layer-MCP%20(FastMCP)-9b59b6)]()
@@ -121,11 +121,11 @@ cd backend
 
 | JD 类型 | 总分 | 要求拆解 | 改写建议 | 全程耗时 |
 |---|---|---|---|---|
-| AI Agent 开发 | 19.0 | 7 条 | 6 条 | 8.4s |
-| Python 后端 | 18.2 | 12 条 | 6 条 | 7.8s |
-| 数据分析（教育） | 25.5 | 12 条 | 6 条 | 8.1s |
+| AI Agent 开发 | 13.2 | 15 条 | 6 条 | 9.1s |
+| Python 后端 | 17.9 | 14 条 | 6 条 | 9.2s |
+| 数据分析（教育） | 50.6 | 13 条 | 6 条 | 7.1s |
 
-评分与直觉一致：量化背景 + 量化实践成果（12000 条 分）对数据分析 JD 最匹配；无 LangChain 项目证据的 JD 得低分——"只认纸面证据"原则的直接体现。prompt 迭代过程与已知问题全部记录在 [docs/prompt-iterations.md](docs/prompt-iterations.md)。
+评分与直觉一致：量化背景 + 数据处理成果对数据分析 JD 最匹配；无 LangChain 项目证据的 JD 得低分——"只认纸面证据"原则的直接体现。prompt 迭代过程与已知问题全部记录在 [docs/prompt-iterations.md](docs/prompt-iterations.md)。
 
 ## 工程实践亮点
 

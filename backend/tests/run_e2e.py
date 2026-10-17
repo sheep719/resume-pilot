@@ -1,4 +1,4 @@
-"""验收：样例简历 × 3 个 JD 全流程实测
+"""端到端验收：样例简历 × 3 个 JD 全流程实测
 
 跑法：.venv/Scripts/python.exe -X utf8 tests/run_e2e.py
 产出：每 JD 一份结果摘要 + 总体验收结论（不落库 session 为 e2e-verify）

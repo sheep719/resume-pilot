@@ -1,6 +1,6 @@
 """Agent 1 · 解析器（Parser）：简历文本 → 结构化 JSON
 
-做实：
+核心实现：
 - LLM 结构化输出（JSON mode）+ Pydantic 校验
 - 校验失败自动重试（把校验错误喂回 LLM，最多 RETRY_TIMES 次）
 - stub 模式保留（无 API key 骨架可跑）
@@ -68,14 +68,14 @@ def _stub() -> dict:
             {
                 "company": "校园二手书平台（数据运营）",
                 "role": "数据运营",
-                "bullets": ["3 学期交易流水 12000 条，报表从 天数据处理量 12000 条提升至报表 6 份"],
+                "bullets": ["pandas 清洗 3 学期交易流水 12000 条，输出热门品类报表 6 份"],
             },
             {
                 "company": "数学集训营（助教）",
-                "role": "集训营助教",
-                "bullets": ["90 名学员周测数据，结营平均分从 90 名学员平均分提升 11 分"],
+                "role": "助教",
+                "bullets": ["跟踪 3 个班 90 名学员的周测数据，结营平均分提升 11 分"],
             },
         ],
-        skills=["Python", "数形结合教学法", "思维导图知识框架"],
+        skills=["Python", "pandas/matplotlib", "SQL 基础"],
         projects=["ResumePilot · 简历优化多 Agent 工具"],
     ).model_dump()
