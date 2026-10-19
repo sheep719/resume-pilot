@@ -15,12 +15,12 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from app import db, observability
+from app import db, observability, parse_cache
 from app.agents.matcher_agent import match_jd
 from app.agents.parser_agent import parse_resume
 from app.config import settings
 from app.graph.workflow import build_graph
-from app.mcp_client import parse_resume_pdf_via_mcp
+from app.mcp_client import parse_resume_pdf_via_mcp, warmup_mcp
 from app.pdf import NotTextPDFError, extract_pdf
 from app.schemas import AnalyzeRequest, AnalyzeResponse
 
@@ -35,6 +35,12 @@ app.add_middleware(
 
 # 编译一次，全局复用（图结构不可变，运行时只是传状态）
 graph = build_graph()
+
+
+@app.on_event("startup")
+async def startup_warmup():
+    """预热 MCP 会话：把 server 子进程冷启动（约 13s）移到服务启动时"""
+    await warmup_mcp()
 
 
 @app.get("/health")
@@ -211,11 +217,21 @@ async def analyze_stream(
         yield _sse("progress", {"node": "parser", "status": "running"})
 
         try:
-            # Agent 1
-            with observability.observe_generation(trace, "parser", "parser-v2", settings.model):
-                resume_dict = await parse_resume(resume_text)
-            yield _sse("progress", {"node": "parser", "status": "done"})
-            yield _sse("resume", {"data": resume_dict, "warnings": warnings})
+            # Agent 1（命中缓存则跳过 LLM 调用）
+            # 注意：这里用独立变量名 active_warnings，避免生成器内赋值遮蔽外层闭包的
+            # warnings（否则未命中分支引用它会 UnboundLocalError——真踩过的坑）
+            cached = parse_cache.get_cached_parse(resume_text)
+            if cached is not None:
+                resume_dict = cached["resume"]
+                active_warnings = cached["warnings"]
+                yield _sse("progress", {"node": "parser", "status": "done", "cached": True})
+            else:
+                with observability.observe_generation(trace, "parser", "parser-v2", settings.model):
+                    resume_dict = await parse_resume(resume_text)
+                active_warnings = warnings
+                parse_cache.put_cached_parse(resume_text, resume_dict, active_warnings)
+                yield _sse("progress", {"node": "parser", "status": "done"})
+            yield _sse("resume", {"data": resume_dict, "warnings": active_warnings})
 
             # Agent 2
             yield _sse("progress", {"node": "matcher", "status": "running"})

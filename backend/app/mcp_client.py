@@ -71,6 +71,19 @@ async def _fallback(pdf_path: str) -> dict:
     return {"ok": True, "pages": extracted.pages, "warnings": extracted.warnings, "resume": resume}
 
 
+async def warmup_mcp() -> bool:
+    """应用启动时预热 MCP 会话（拉起 server 子进程，消除首次调用 13s 冷启动）
+
+    返回是否成功；失败时首次真实调用仍会自动重试 + 降级，无需特殊处理。
+    """
+    session = await _ensure_session()
+    if session is False:
+        logger.info("MCP 预热失败（将在首次调用时重试，失败则降级进程内直调）")
+        return False
+    logger.info("MCP 会话已预热（server 子进程就绪）")
+    return True
+
+
 async def close():
     global _client, _session
     if _client:

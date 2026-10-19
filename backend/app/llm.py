@@ -25,6 +25,7 @@ async def chat(messages: list[dict[str, str]], json_mode: bool = False) -> str:
     resp = await client.chat.completions.create(
         model=settings.model,
         messages=messages,
+        temperature=0.0,  # 评分/解析类任务要确定性输出（默认 temperature 下同输入总分漂移实测 4.0，置 0 后收敛到 0.0/2.2）
         response_format={"type": "json_object"} if json_mode else None,
     )
     return resp.choices[0].message.content or ""

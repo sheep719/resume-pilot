@@ -2,8 +2,9 @@
 
 上传简历 PDF + 粘贴目标岗位 JD → 三个 Agent 协作 → 匹配度评分 + 逐段改写建议（STAR 法则，SSE 流式渲染）。
 
-![screenshot](docs/screenshot-result.png)
+![demo](docs/demo.gif)
 
+[![CI](https://github.com/sheep719/resume-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/sheep719/resume-pilot/actions/workflows/ci.yml)
 [![LangGraph](https://img.shields.io/badge/orchestration-LangGraph%20StateGraph-blue)]()
 [![MCP](https://img.shields.io/badge/tool%20layer-MCP%20(FastMCP)-9b59b6)]()
 [![FastAPI](https://img.shields.io/badge/backend-FastAPI%20%2B%20SSE-teal)]()
@@ -129,10 +130,12 @@ cd backend
 
 ## 工程实践亮点
 
+- **评分确定性**：LLM 调用统一 temperature=0，修复同简历评分漂移（实测 15.0→19.0）；JD 文本按不可信数据处理，prompt 层声明注入指令一律视为普通文本
+- **解析缓存**：简历文本哈希 LRU 缓存（100 条），同一简历换 JD 重分析跳过解析调用，实测 6.7s→3.2s
+- **MCP 冷启动预热**：server 子进程在 FastAPI startup 拉起，首次请求不再吃 13s 冷启动
 - **平滑协议化改造**：MCP client 连接失败自动降级进程内直调，协议迁移不停服
 - **流式可靠性**：`asyncio.wait(FIRST_COMPLETED)` 竞争监听图任务与推送队列，图异常立即冒出（不让 `create_task` 吞异常导致流挂死——真踩过的坑）
 - **LLM 错误分级**：402 余额 / 401 鉴权 / 超时映射为语义化 HTTP 响应，前端可引导用户
-- **零成本开发回路**：stub 模式让全流程（含 SSE 流式）在无 key、无网环境可跑，真机验证只在验收时做
 - **分层测试策略**：单元测试全 stub（零 API 成本、CI 友好）、E2E 用真 key 但控制频率（约 ¥0.02/次）、测试 fixtures 入库保证可复现
 
 ## Roadmap

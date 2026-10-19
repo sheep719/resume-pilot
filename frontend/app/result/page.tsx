@@ -5,50 +5,55 @@ import { useEffect } from "react";
 import { useAnalysis } from "@/lib/store";
 import ScoreGauge from "@/components/ScoreGauge";
 import RadarChart from "@/components/RadarChart";
-import RequirementList from "@/components/RequirementList";
 import RewriteCard from "@/components/RewriteCard";
-import type { AgentName } from "@/lib/types";
+import type { JDRequirement } from "@/lib/types";
 
-const AGENT_LABEL: Record<AgentName, string> = {
-  parser: "Agent 1 · 解析",
-  matcher: "Agent 2 · 匹配",
-  rewriter: "Agent 3 · 改写",
-};
+const STAGE_TIPS = [
+  "正在阅读你的简历…",
+  "正在逐条比对岗位要求…",
+  "正在为你打磨改进建议…",
+];
 
 export default function ResultPage() {
   const {
-    start, reset, started, progress, resume, warnings, match,
-    rewrites, trace, skippedReason, error, finished, file, jdText,
+    start, reset, started, progress, warnings, match,
+    rewrites, skippedReason, error, finished, file,
   } = useAnalysis();
   const router = useRouter();
 
   useEffect(() => {
     if (!started) {
-      if (!file || !jdText.trim()) {
-        router.replace("/"); // 无输入（如直接刷新），回上传页
+      if (!file) {
+        router.replace("/");
         return;
       }
       start();
     }
-  }, [started, file, jdText, start, router]);
+  }, [started, file, start, router]);
 
-  const spinner = (
-    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-indigo-500" />
-  );
+  const running = !finished && !error;
+  const stageIdx = progress.matcher === "done" ? 2
+    : progress.matcher === "running" ? 1 : 0;
+
+  const hits = match?.requirements.filter((r) => r.status === "hit") ?? [];
+  const gaps = match?.requirements.filter((r) => r.status !== "hit") ?? [];
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
+    <main className="mx-auto max-w-3xl px-6 py-12">
+      {/* 顶栏 */}
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-indigo-600">ResumePilot</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight">分析结果</h1>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight">
+            {match ? "你的匹配报告" : "正在分析…"}
+          </h1>
           {file && <p className="mt-1 text-sm text-gray-500">{file.name}</p>}
         </div>
         <button
           onClick={() => { reset(); router.push("/"); }}
           className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
         >
-          新的分析
+          分析另一份简历
         </button>
       </div>
 
@@ -58,29 +63,18 @@ export default function ResultPage() {
         </div>
       )}
 
-      {/* Agent 进度条 */}
-      <div className="mt-8 grid grid-cols-3 gap-3">
-        {(Object.keys(AGENT_LABEL) as AgentName[]).map((k) => {
-          const st = progress[k];
-          return (
-            <div
-              key={k}
-              className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-3 text-sm ${
-                st === "done" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : st === "running" ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                : "border-gray-200 bg-white text-gray-400"
-              }`}
-            >
-              {st === "running" && spinner}
-              {st === "done" ? "✓" : "○"} {AGENT_LABEL[k]}
-            </div>
-          );
-        })}
-      </div>
+      {/* 分析中：优雅的分阶段提示，无内部术语 */}
+      {running && (
+        <div className="mt-16 flex flex-col items-center gap-5">
+          <span className="inline-block h-10 w-10 animate-spin rounded-full border-[3px] border-gray-200 border-t-indigo-500" />
+          <p className="text-base font-medium text-gray-700">{STAGE_TIPS[stageIdx]}</p>
+          <p className="text-xs text-gray-400">通常需要 10 秒左右，请稍候</p>
+        </div>
+      )}
 
       {error && (
-        <div className="mt-8 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-          <p className="font-semibold">分析失败</p>
+        <div className="mt-12 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+          <p className="font-semibold">分析没能完成</p>
           <p className="mt-1">{error}</p>
           <button
             onClick={() => { reset(); router.push("/"); }}
@@ -91,107 +85,113 @@ export default function ResultPage() {
         </div>
       )}
 
-      {/* 评分区：总分仪表盘 + 雷达 */}
       {match && (
-        <section className="mt-10 grid grid-cols-1 items-center gap-6 rounded-2xl border border-gray-200 bg-white p-6 md:grid-cols-2">
-          <ScoreGauge score={match.total_score} />
-          <div className="flex flex-col items-center">
-            <RadarChart scores={match.dimension_scores} />
-            <p className="mt-2 text-xs text-gray-400">
-              权重：硬技能 40% · 项目 30% · 学历 15% · 加分 15%
-            </p>
-          </div>
-        </section>
-      )}
+        <>
+          {/* 总评卡 */}
+          <section className="mt-8 overflow-hidden rounded-2xl border border-gray-200 bg-white">
+            <div className="grid grid-cols-1 items-center divide-y divide-gray-100 md:grid-cols-2 md:divide-x md:divide-y-0">
+              <div className="p-6">
+                <ScoreGauge score={match.total_score} />
+              </div>
+              <div className="flex flex-col items-center p-6">
+                <RadarChart scores={match.dimension_scores} />
+              </div>
+            </div>
+            <div className="border-t border-gray-100 bg-gray-50/60 px-6 py-3.5">
+              <Verdict score={match.total_score} hits={hits.length} total={match.requirements.length} />
+            </div>
+          </section>
 
-      {/* 解析出的简历结构（Agent 1 产出） */}
-      {resume && (
-        <section className="mt-8">
-          <h2 className="text-base font-semibold text-gray-900">简历结构（Agent 1 解析）</h2>
-          <div className="mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
-            <Card title={`教育 ×${resume.education.length}`} items={resume.education} />
-            <Card
-              title={`经历 ×${resume.experience.length}`}
-              items={resume.experience.map((e) => `${e.role} @ ${e.company}：${e.bullets.join("；")}`)}
-            />
-            <Card title={`技能 ×${resume.skills.length}`} items={resume.skills} />
-            <Card title={`项目 ×${resume.projects.length}`} items={resume.projects} />
-          </div>
-        </section>
-      )}
+          {/* 优势 */}
+          {hits.length > 0 && (
+            <section className="mt-8">
+              <h2 className="text-base font-semibold text-gray-900">
+                你的优势（{hits.length}）
+              </h2>
+              <div className="mt-3 space-y-2">
+                {hits.map((r, i) => (
+                  <div key={i} className="flex items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50/50 px-4 py-3 text-sm">
+                    <span className="mt-0.5">✅</span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-800">{r.requirement}</p>
+                      {r.evidence && (
+                        <p className="mt-1 truncate text-xs text-gray-500">你的简历依据：{r.evidence}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
-      {/* 要求清单（Agent 2 产出） */}
-      {match && (
-        <section className="mt-10">
-          <h2 className="text-base font-semibold text-gray-900">
-            JD 要求逐条比对（{match.requirements.length} 条）
-          </h2>
-          <div className="mt-3">
-            <RequirementList requirements={match.requirements} />
-          </div>
-        </section>
-      )}
+          {/* 差距 */}
+          {gaps.length > 0 && (
+            <section className="mt-8">
+              <h2 className="text-base font-semibold text-gray-900">
+                待提升（{gaps.length}）
+              </h2>
+              <div className="mt-3 space-y-2">
+                {gaps.map((r, i) => (
+                  <div key={i} className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm">
+                    <span className="mt-0.5">{r.status === "partial" ? "🟡" : "⚪"}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-gray-800">{r.requirement}</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {r.status === "partial" ? "简历有相关内容，但深度或证据不够突出" : "简历中还没有体现这条要求"}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
-      {/* 改写建议（Agent 3 流式产出） */}
-      {match && !skippedReason && (
-        <section className="mt-10">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold text-gray-900">
-              改写建议{rewrites.length > 0 && `（${rewrites.length}）`}
-            </h2>
-            {progress.rewriter === "running" && spinner}
-          </div>
-          <p className="mt-1 text-xs text-gray-400">
-            ⚠️/❌ 条目按 STAR 法则改写；缺失项给出占位符模板（X%、N 次），请填入真实数据后再使用
-          </p>
-          <div className="mt-4 space-y-4">
-            {rewrites.map((r, i) => (
-              <RewriteCard key={i} item={r} index={i} />
-            ))}
-            {progress.rewriter === "running" && rewrites.length === 0 && (
-              <p className="text-sm text-gray-400">正在生成改写建议…</p>
-            )}
-            {finished && rewrites.length === 0 && !error && (
-              <p className="text-sm text-gray-400">没有需要改写的条目</p>
-            )}
-          </div>
-        </section>
-      )}
+          {/* 改进建议 */}
+          {!skippedReason && (
+            <section className="mt-8">
+              <h2 className="text-base font-semibold text-gray-900">
+                改进建议{rewrites.length > 0 ? `（${rewrites.length}）` : ""}
+              </h2>
+              <p className="mt-1 text-xs text-gray-400">
+                标 🟡 的条目给出可直接使用的改写；标 ⚪ 的给出补充方向——带 X、N 占位的地方请填入你的真实数据
+              </p>
+              <div className="mt-4 space-y-4">
+                {rewrites.map((r, i) => (
+                  <RewriteCard key={i} item={r} />
+                ))}
+                {progress.rewriter === "running" && (
+                  <div className="flex items-center gap-3 rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-4 py-3 text-sm text-gray-400">
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-200 border-t-indigo-400" />
+                    建议生成中…
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
-      {skippedReason && (
-        <div className="mt-10 rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-800">
-          🎉 {skippedReason}
-        </div>
-      )}
-
-      {/* 链路耗时（可观测性） */}
-      {finished && trace.length > 0 && (
-        <section className="mt-10">
-          <h2 className="text-base font-semibold text-gray-900">链路耗时</h2>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-600">
-            {trace.map((t, i) => (
-              <span key={i} className="rounded-md border border-gray-200 bg-white px-2.5 py-1">
-                {t.node} · {t.ms}ms{t.skipped_precomputed ? "（预计算）" : ""}
-              </span>
-            ))}
-          </div>
-        </section>
+          {skippedReason && (
+            <div className="mt-8 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800">
+              🎉 简历与这个岗位高度匹配，没有需要改进的条目。
+            </div>
+          )}
+        </>
       )}
     </main>
   );
 }
 
-function Card({ title, items }: { title: string; items: string[] }) {
+function Verdict({ score, hits, total }: { score: number; hits: number; total: number }) {
+  let text: string;
+  if (score >= 85) text = "简历与岗位高度匹配，可以直接投递。";
+  else if (score >= 60) text = "整体匹配不错，补齐下方几条后胜算更大。";
+  else if (score >= 35) text = "有基础但差距明显，建议重点打磨待提升项后再投。";
+  else text = "目前匹配度较低，如坚持投递请逐条参考改进建议重写相关段落。";
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
-      <p className="text-xs font-medium text-gray-400">{title}</p>
-      {items.length === 0 ? (
-        <p className="mt-2 text-sm text-gray-300">（空）</p>
-      ) : (
-        <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-gray-700">
-          {items.map((it, i) => <li key={i} className="flex gap-1.5"><span className="text-gray-300">·</span>{it}</li>)}
-        </ul>
-      )}
-    </div>
+    <p className="text-center text-sm text-gray-700">
+      {text}
+      <span className="ml-2 text-xs text-gray-400">
+        {hits}/{total} 条岗位要求已满足
+      </span>
+    </p>
   );
 }

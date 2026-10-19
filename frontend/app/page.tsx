@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { useAnalysis } from "@/lib/store";
-import BackendStatus from "@/components/BackendStatus";
 import HistoryPanel from "@/components/HistoryPanel";
 
 export default function UploadPage() {
@@ -35,10 +34,10 @@ export default function UploadPage() {
     <main className="mx-auto max-w-2xl px-6 py-14">
       <p className="text-sm font-medium text-indigo-600">ResumePilot</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight">
-        简历优化 · 三 Agent 协作分析
+        你的简历和这个岗位，差多远？
       </h1>
       <p className="mt-3 text-gray-600">
-        上传简历 PDF + 粘贴目标岗位 JD，解析 → 匹配评分 → STAR 法则改写建议，全程流式推送。
+        上传简历 + 粘贴岗位描述，10 秒后你会得到：匹配分数、优势清单、差距分析和逐条改写建议。
       </p>
 
       <form onSubmit={onSubmit} className="mt-10 space-y-6">
@@ -98,14 +97,13 @@ export default function UploadPage() {
               : "cursor-not-allowed bg-gray-200 text-gray-400"
           }`}
         >
-          {ready ? "开始分析" : "请上传简历并粘贴 JD（至少 20 字）"}
+          {ready ? "开始分析" : "请上传简历并粘贴岗位描述（至少 20 字）"}
         </button>
       </form>
 
       <div className="mt-10">
-        <BackendStatus />
+        <HistoryPanel />
       </div>
-      <HistoryPanel />
     </main>
   );
 }
