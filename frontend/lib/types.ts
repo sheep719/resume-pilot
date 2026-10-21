@@ -28,12 +28,23 @@ export interface MatchResult {
   total_score: number;
 }
 
+export interface ValidationIssue {
+  type: string;
+  level: "fatal" | "warning" | "notice";
+  detail: string;
+  evidence: string;
+}
+
 export interface RewriteSuggestion {
   original: string;
   rewritten: string;
   reason: string;
   for_requirement: string;
   was_status: ReqStatus;
+  validation?: {
+    risk: "ok" | "notice" | "warning" | "fatal";
+    issues: ValidationIssue[];
+  };
 }
 
 export type AgentName = "parser" | "matcher" | "rewriter";

@@ -14,6 +14,7 @@ import logging
 
 from pydantic import ValidationError
 
+from app.agents.validator import validate_rewrite
 from app.llm import chat_json, is_stub
 from app.schemas import RewriteSuggestion
 
@@ -105,6 +106,8 @@ async def rewrite(resume: dict, requirements: list[dict], config: dict | None = 
                 "was_status": req["status"],
             }
             ok = False
+        # 事实一致性校验（规则引擎，零 LLM 成本）：防止改写器幻觉实体/时间/数字
+        item["validation"] = validate_rewrite(resume, item["rewritten"])
         if queue:
             await queue.put({"type": "rewrite", "data": item, "ok": ok})
         return item
@@ -114,6 +117,8 @@ async def rewrite(resume: dict, requirements: list[dict], config: dict | None = 
 
 async def _stub_stream(targets: list[dict], queue) -> list[dict]:
     """stub 模式：模拟逐条推送节奏（演示流式效果，0 成本）"""
+    from app.agents.validator import validate_rewrite as _v
+
     results = []
     for i, req in enumerate(targets):
         await asyncio.sleep(0.4)  # 模拟 LLM 延迟
@@ -124,6 +129,7 @@ async def _stub_stream(targets: list[dict], queue) -> list[dict]:
             "for_requirement": req["requirement"],
             "was_status": req["status"],
         }
+        item["validation"] = _v({"skills": []}, item["rewritten"])
         if queue:
             await queue.put({"type": "rewrite", "data": item, "ok": True})
         results.append(item)

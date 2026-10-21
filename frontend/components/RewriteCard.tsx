@@ -46,6 +46,27 @@ export default function RewriteCard({ item }: { item: RewriteSuggestion }) {
           <p className="text-xs leading-relaxed text-gray-500">💡 {item.reason}</p>
         </div>
       )}
+
+      <ValidationBanner validation={item.validation} />
+    </div>
+  );
+}
+
+const LEVEL_META = {
+  fatal: { icon: "⛔", cls: "border-red-200 bg-red-50 text-red-700", label: "事实风险" },
+  warning: { icon: "⚠️", cls: "border-amber-200 bg-amber-50 text-amber-800", label: "请核实" },
+  notice: { icon: "💡", cls: "border-blue-100 bg-blue-50 text-blue-700", label: "提示" },
+} as const;
+
+function ValidationBanner({ validation }: { validation?: RewriteSuggestion["validation"] }) {
+  if (!validation || validation.risk === "ok" || validation.issues.length === 0) return null;
+  return (
+    <div className={`mt-3 space-y-1.5 rounded-lg border px-3.5 py-2.5 ${LEVEL_META[validation.risk].cls}`}>
+      {validation.issues.slice(0, 3).map((issue, i) => (
+        <p key={i} className="text-xs leading-relaxed">
+          {LEVEL_META[issue.level].icon} {issue.detail}
+        </p>
+      ))}
     </div>
   );
 }

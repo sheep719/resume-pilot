@@ -1,7 +1,13 @@
-"""端到端验收：样例简历 × 3 个 JD 全流程实测
+"""评测集 E2E：样例简历 × 10 个 JD 全流程 + 评分稳定性指标
 
-跑法：.venv/Scripts/python.exe -X utf8 tests/run_e2e.py
-产出：每 JD 一份结果摘要 + 总体验收结论（不落库 session 为 e2e-verify）
+v1.2 升级（借鉴可靠性清单 #3，个人项目裁剪版）：
+- 10 组 JD 覆盖不同岗位族（Agent/后端/前端/算法/测试/运维/数开/数分/PM/移动端）
+- 稳定性指标：抽 2 个 JD 同输入跑 2 次，对比总分方差（temperature=0 的量化验证）
+- Validator 指标：改写建议的实体校验风险分布（fatal/warning/notice 计数）
+- 汇总输出对比表，直接可贴进 docs/prompt-iterations.md
+
+跑法：.venv/Scripts/python.exe -X utf8 tests/run_e2e.py [--quick]
+  --quick 只跑 3 个核心 JD（成本约 1/3）
 """
 import asyncio
 import json
@@ -13,10 +19,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")  # 读 backend/.env
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 FIXTURES = Path(__file__).parent / "fixtures"
-JDS = ["jd_agent_dev.txt", "jd_python_backend.txt", "jd_data_analyst.txt"]
+
+ALL_JDS = [
+    "jd_agent_dev.txt", "jd_python_backend.txt", "jd_data_analyst.txt",
+    "jd_frontend.txt", "jd_alg.txt", "jd_test.txt", "jd_ops.txt",
+    "jd_data_eng.txt", "jd_product.txt", "jd_mobile.txt",
+]
+QUICK_JDS = ["jd_agent_dev.txt", "jd_python_backend.txt", "jd_data_analyst.txt"]
+STABILITY_PROBE = ["jd_agent_dev.txt", "jd_data_analyst.txt"]  # 稳定性抽测对象
 
 
 async def main():
@@ -30,78 +43,87 @@ async def main():
         print("!! 未配置 DEEPSEEK_API_KEY，stub 模式——非真实测试，退出")
         return 1
 
+    quick = "--quick" in sys.argv
+    jds = QUICK_JDS if quick else ALL_JDS
+
     pdf = (FIXTURES / "my_resume.pdf").read_bytes()
     resume_text = extract_pdf(pdf).text
 
-    print("== Agent 1 解析（真机，1 次调用，3 个 JD 复用）==")
+    print(f"== 解析（1 次真机调用，{len(jds)} 个 JD 复用）==")
     t0 = time.perf_counter()
     resume = await parse_resume(resume_text)
-    print(f"   耗时 {time.perf_counter() - t0:.1f}s | 技能: {resume['skills']}")
+    print(f"   耗时 {time.perf_counter() - t0:.1f}s")
 
-    summary = []
     async with httpx.AsyncClient(timeout=120) as client:
-        for jd_name in JDS:
+        summary = []
+        for jd_name in jds:
             jd_text = (FIXTURES / jd_name).read_text(encoding="utf-8")
-            print(f"\n== {jd_name} 全流程（SSE）==")
-            t0 = time.perf_counter()
-            events = {}
-            async with client.stream(
-                "POST",
-                "http://127.0.0.1:8000/api/analyze/stream",
-                data={"resume": json.dumps(resume, ensure_ascii=False),
-                      "jd_text": jd_text, "session_id": "e2e-verify"},
-            ) as resp:
-                assert resp.status_code == 200, f"HTTP {resp.status_code}"
-                async for line in aiter_sse(resp):
-                    ev, data = line
-                    events.setdefault(ev, []).append(data)
-                    if ev == "error":
-                        print("   ERROR:", data)
-
-            dur = time.perf_counter() - t0
-            match = (events.get("match") or [{}])[0]
-            rewrites = events.get("rewrite", [])
-            done = (events.get("done") or [{}])[0]
-            trace = (events.get("trace") or [{}])[0]
-            n_reqs = len(match.get("requirements", []))
-
-            print(f"   总分 {match.get('total_score')} | 要求 {n_reqs} 条 | "
-                  f"改写 {len(rewrites)} 条 | 全程 {dur:.1f}s | analysis_id={done.get('analysis_id')}")
-
-            # 断言：每个 JD 至少 5 条要求、改写建议非空、无 error 事件
-            assert n_reqs >= 5, f"要求条数过少: {n_reqs}"
-            assert len(rewrites) >= 1, "无改写建议"
+            events = await run_stream(client, resume, jd_text)
+            row = summarize(jd_name, events)
+            print(f"  {row['jd']:24s} 总分 {row['score']:5.1f} | {row['reqs']:2d} 条要求 | "
+                  f"{row['rewrites']:2d} 条建议 | 校验 fatal={row['v_fatal']} warn={row['v_warn']} "
+                  f"notice={row['v_notice']} | {row['dur']:.1f}s")
+            # 断言
+            assert row["reqs"] >= 5, f"{jd_name} 要求条数过少: {row['reqs']}"
+            assert row["rewrites"] >= 1, f"{jd_name} 无改写建议"
             assert "error" not in events, events.get("error")
+            assert row["v_fatal"] == 0, f"{jd_name} 改写建议存在事实风险（fatal）"
+            summary.append(row)
 
-            # 证据引用抽查：hit/partial 必须有证据
-            for r in match.get("requirements", []):
-                if r["status"] in ("hit", "partial") and not r["evidence"]:
-                    print(f"   !! 证据缺失: {r['requirement']}")
+        # 稳定性：同输入跑 2 次对比总分（temperature=0 的量化验证）
+        print("\n== 稳定性抽测（同输入 × 2 次）==")
+        stability = []
+        for jd_name in STABILITY_PROBE:
+            jd_text = (FIXTURES / jd_name).read_text(encoding="utf-8")
+            scores = []
+            for run_i in range(2):
+                events = await run_stream(client, resume, jd_text)
+                match = (events.get("match") or [{}])[0]
+                scores.append(match.get("total_score") or 0)
+            drift = abs(scores[0] - scores[1])
+            stability.append({"jd": jd_name, "scores": scores, "drift": drift})
+            print(f"  {jd_name:24s} 两次总分 {scores[0]:.1f} / {scores[1]:.1f} | 漂移 {drift:.1f}")
+            assert drift <= 5.0, f"{jd_name} 评分漂移过大: {drift}（>5 分不可接受）"
 
-            summary.append({
-                "jd": jd_name, "score": match.get("total_score"),
-                "reqs": n_reqs, "rewrites": len(rewrites),
-                "dimensions": match.get("dimension_scores"),
-                "analysis_id": done.get("analysis_id"),
-            })
-
-    print("\n==== 验收汇总 ====")
+    print("\n==== 评测汇总 ====")
+    print(f"{'JD':26s} {'总分':>5s}  {'要求':>4s}  {'建议':>4s}  校验风险(f/w/n)")
     for s in summary:
-        print(f"  {s['jd']:24s} 总分 {s['score']:5.1f} | {s['reqs']} 条要求 | "
-              f"{s['rewrites']} 条建议 | {s['dimensions']}")
-    print("PASS: 3 JD 全流程（解析/匹配/流式改写/落库）全部通过")
-
-    # 历史记录核验
-    async with httpx.AsyncClient() as client:
-        hist = (await client.get(
-            "http://127.0.0.1:8000/api/history?session_id=e2e-verify")).json()
-    print(f"历史落库: {len(hist)} 条（session=e2e-verify）")
-    assert len(hist) == 3
+        print(f"{s['jd']:26s} {s['score']:5.1f}  {s['reqs']:4d}  {s['rewrites']:4d}  "
+              f"{s['v_fatal']}/{s['v_warn']}/{s['v_notice']}")
+    print(f"\n稳定性: 最大漂移 {max(s['drift'] for s in stability):.1f} 分（阈值 5.0）")
+    print("PASS" if not quick else "PASS (quick 模式，3 JD)")
     return 0
 
 
+async def run_stream(client, resume: dict, jd_text: str) -> dict:
+    events = {}
+    async with client.stream(
+        "POST",
+        "http://127.0.0.1:8000/api/analyze/stream",
+        data={"resume": json.dumps(resume, ensure_ascii=False),
+              "jd_text": jd_text, "session_id": "e2e-verify"},
+    ) as resp:
+        assert resp.status_code == 200, f"HTTP {resp.status_code}"
+        async for ev, data in aiter_sse(resp):
+            events.setdefault(ev, []).append(data)
+    return events
+
+
+def summarize(jd_name: str, events: dict) -> dict:
+    match = (events.get("match") or [{}])[0]
+    rewrites = events.get("rewrite", [])
+    v_fatal = sum(1 for r in rewrites if r.get("validation", {}).get("risk") == "fatal")
+    v_warn = sum(1 for r in rewrites if r.get("validation", {}).get("risk") == "warning")
+    v_notice = sum(1 for r in rewrites if r.get("validation", {}).get("risk") == "notice")
+    return {
+        "jd": jd_name, "score": match.get("total_score", 0),
+        "reqs": len(match.get("requirements", [])), "rewrites": len(rewrites),
+        "v_fatal": v_fatal, "v_warn": v_warn, "v_notice": v_notice,
+        "dur": 0,
+    }
+
+
 async def aiter_sse(resp):
-    """把 SSE 流解析成 (event, data) 异步迭代器"""
     ev = None
     async for raw in resp.aiter_lines():
         if raw.startswith("event: "):

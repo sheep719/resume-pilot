@@ -16,8 +16,9 @@ export default function UploadPage() {
 
   function pickFile(f: File | null | undefined) {
     if (!f) return;
-    if (!f.name.toLowerCase().endsWith(".pdf")) {
-      setLocalErr("只支持 PDF 文件（图片型扫描件无法解析）");
+    const name = f.name.toLowerCase();
+    if (!name.endsWith(".pdf") && !name.endsWith(".docx")) {
+      setLocalErr("只支持 PDF 或 Word（.docx）文件");
       return;
     }
     setLocalErr(null);
@@ -53,7 +54,7 @@ export default function UploadPage() {
           <input
             ref={inputRef}
             type="file"
-            accept=".pdf"
+            accept=".pdf,.docx"
             className="hidden"
             onChange={(e) => pickFile(e.target.files?.[0])}
           />
@@ -66,8 +67,8 @@ export default function UploadPage() {
             </div>
           ) : (
             <div>
-              <p className="font-medium text-gray-700">拖拽 PDF 到这里，或点击选择文件</p>
-              <p className="mt-1 text-sm text-gray-400">仅支持文本型 PDF，10MB 以内</p>
+              <p className="font-medium text-gray-700">拖拽简历到这里，或点击选择文件</p>
+              <p className="mt-1 text-sm text-gray-400">支持 PDF 和 Word（.docx），10MB 以内</p>
             </div>
           )}
         </div>

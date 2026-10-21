@@ -99,7 +99,7 @@ docker compose up -d backend frontend
 
 | 端点 | 说明 |
 |---|---|
-| `POST /api/parse` | 上传 PDF → 结构化 JSON（经 MCP server，扫描件 422 拒绝，双栏布局告警） |
+| `POST /api/parse` | 上传 PDF/DOCX → 结构化 JSON（经 MCP server，扫描件 422 拒绝，双栏布局告警） |
 | `POST /api/match` | 简历 JSON + JD → 四维评分 + 逐条证据 |
 | `POST /api/analyze/stream` | **全流程 SSE**：progress / resume / match / rewrite（逐条推送）/ trace / done |
 | `GET /api/history?session_id=` | 历史记录（session 粒度，无登录体系） |
@@ -114,25 +114,35 @@ curl -N -X POST http://127.0.0.1:8000/api/analyze/stream \
 
 ```bash
 cd backend
-.venv\Scripts\python -m pytest tests/ -q            # 12 个单元测试（stub 模式，零 API 成本）
-.venv\Scripts\python -X utf8 tests/run_e2e.py       # 3 个真实 JD 全流程回归（约 ¥0.02/次）
+.venv\Scripts\python -m pytest tests/ -q            # 21 个单元测试（stub 模式，零 API 成本）
+.venv\Scripts\python -X utf8 tests/run_e2e.py       # 10 组 JD 全流程回归 + 稳定性抽测
 ```
 
-**样例简历 × 3 JD 实测**（DeepSeek 真机，一键复现：`run_e2e.py`）：
+**样例简历 × 10 JD 评测实录**（DeepSeek 真机，一键复现：`run_e2e.py`）：
 
-| JD 类型 | 总分 | 要求拆解 | 改写建议 | 全程耗时 |
+| JD 类型 | 总分 | 要求拆解 | 改写建议 | 校验风险(f/w) |
 |---|---|---|---|---|
-| AI Agent 开发 | 13.2 | 15 条 | 6 条 | 9.1s |
-| Python 后端 | 17.9 | 14 条 | 6 条 | 9.2s |
-| 数据分析（教育） | 50.6 | 13 条 | 6 条 | 7.1s |
+| AI Agent 开发 | 17.9 | 14 | 6 | 0/4 |
+| Python 后端 | 17.8 | 13 | 6 | 0/2 |
+| 数据分析 | 56.5 | 14 | 6 | 0/2 |
+| 前端 | 15.9 | 11 | 6 | 0/3 |
+| 算法（推荐） | 22.8 | 10 | 6 | 0/2 |
+| 测试开发 | 33.2 | 10 | 6 | 0/1 |
+| 运维 SRE | 15.5 | 9 | 6 | 0/2 |
+| 数据开发 | 37.2 | 10 | 6 | 0/2 |
+| AI 产品 | 42.1 | 11 | 6 | 0/2 |
+| Android | 12.9 | 8 | 6 | 0/2 |
 
-评分与直觉一致：量化背景 + 数据处理成果对数据分析 JD 最匹配；无 LangChain 项目证据的 JD 得低分——"只认纸面证据"原则的直接体现。prompt 迭代过程与已知问题全部记录在 [docs/prompt-iterations.md](docs/prompt-iterations.md)。
+评分符合直觉（量化背景对数据分析 JD 最匹配，56.5 分）；稳定性抽测同输入两次总分漂移 0.0~2.2 分（temperature=0）；60 条改写建议 0 fatal（Validator 实体校验通过）。prompt 迭代过程与已知问题全部记录在 [docs/prompt-iterations.md](docs/prompt-iterations.md)。
 
 ## 工程实践亮点
 
-- **评分确定性**：LLM 调用统一 temperature=0，修复同简历评分漂移（实测 15.0→19.0）；JD 文本按不可信数据处理，prompt 层声明注入指令一律视为普通文本
+- **事实一致性校验（Validator）**：规则引擎对每条改写建议做实体比对（机构/技能/数字/时间线三级风险 fatal/warning/notice），新增原文没有的时间线直接标红——防幻觉的硬防线，零 LLM 成本；60 条真机建议 0 fatal
+- **评分确定性**：LLM 调用统一 temperature=0，修复同简历评分漂移（默认值实测漂移 4.0 → 0.0~2.2）；JD 文本按不可信数据处理，prompt 层声明注入指令一律视为普通文本
+- **评测集驱动迭代**：10 组 JD 全量回归（`tests/run_e2e.py` 一键，含稳定性抽测与校验风险统计），结果直接写入 [docs/prompt-iterations.md](docs/prompt-iterations.md)
 - **解析缓存**：简历文本哈希 LRU 缓存（100 条），同一简历换 JD 重分析跳过解析调用，实测 6.7s→3.2s
 - **MCP 冷启动预热**：server 子进程在 FastAPI startup 拉起，首次请求不再吃 13s 冷启动
+- **多解析器路由**：PDF（pdfplumber）/DOCX（python-docx，段落+表格按文档序）按扩展名路由
 - **平滑协议化改造**：MCP client 连接失败自动降级进程内直调，协议迁移不停服
 - **流式可靠性**：`asyncio.wait(FIRST_COMPLETED)` 竞争监听图任务与推送队列，图异常立即冒出（不让 `create_task` 吞异常导致流挂死——真踩过的坑）
 - **LLM 错误分级**：402 余额 / 401 鉴权 / 超时映射为语义化 HTTP 响应，前端可引导用户
@@ -165,7 +175,7 @@ backend/
     llm.py             # LLM 封装：JSON mode / 解析重试 / stub 模式
     schemas.py         # Pydantic 契约 + 评分权重常量
   tools/mcp_server.py  # MCP server（FastMCP）：parse_resume_pdf 工具，独立进程
-  tests/               # pytest 12 例 + run_e2e.py 3-JD 真机回归 + fixtures
+  tests/               # pytest 21 例 + run_e2e.py 10-JD 评测回归 + fixtures
 frontend/
   app/                 # 上传页 / + 结果页 /result
   components/          # ScoreGauge / RadarChart（纯 SVG 零依赖）/ RequirementList / RewriteCard

@@ -21,7 +21,7 @@ from app.agents.parser_agent import parse_resume
 from app.config import settings
 from app.graph.workflow import build_graph
 from app.mcp_client import parse_resume_pdf_via_mcp, warmup_mcp
-from app.pdf import NotTextPDFError, extract_pdf
+from app.pdf import NotTextPDFError, UnsupportedFileError, extract_document, extract_pdf
 from app.schemas import AnalyzeRequest, AnalyzeResponse
 
 app = FastAPI(title="ResumePilot API", version="0.1.0")
@@ -191,15 +191,18 @@ async def analyze_stream(
         raise HTTPException(400, "需要上传 PDF 文件或提供已解析的 resume JSON")
 
     if file is not None:
-        if not (file.filename or "").lower().endswith(".pdf"):
-            raise HTTPException(400, "只支持 PDF 文件")
+        name = (file.filename or "").lower()
+        if not (name.endswith(".pdf") or name.endswith(".docx")):
+            raise HTTPException(400, "只支持 PDF / DOCX 文件")
         raw = await file.read()
         if len(raw) > 10 * 1024 * 1024:
-            raise HTTPException(413, "PDF 超过 10MB 上限")
+            raise HTTPException(413, "文件超过 10MB 上限")
         try:
-            extracted = extract_pdf(raw)
+            extracted = extract_document(name, raw)
         except NotTextPDFError as exc:
             raise HTTPException(422, str(exc))
+        except UnsupportedFileError as exc:
+            raise HTTPException(400, str(exc))
         resume_text, warnings = extracted.text, extracted.warnings
     else:
         try:
