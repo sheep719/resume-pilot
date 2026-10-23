@@ -41,6 +41,9 @@ graph = build_graph()
 async def startup_warmup():
     """预热 MCP 会话：把 server 子进程冷启动（约 13s）移到服务启动时"""
     await warmup_mcp()
+    # Langfuse 客户端预热：消除首个请求时 OTel provider 初始化竞态
+    # （否则进程重启后第一次分析的 root span 会静默丢失）
+    observability.warmup()
 
 
 @app.get("/health")
@@ -256,6 +259,8 @@ async def analyze_stream(
                     "skipped": "rewriter",
                     "reason": f"总分 {match_dict['total_score']} > {SKIP_REWRITE_THRESHOLD}，跳过改写",
                 })
+                observability.end_trace(trace, output={"total_score": match_dict["total_score"], "rewrites": 0})
+                observability.flush()
                 yield _sse("done", {"rewrites": 0, "analysis_id": analysis_id})
                 return
 
@@ -263,7 +268,10 @@ async def analyze_stream(
             yield _sse("progress", {"node": "rewriter", "status": "running"})
 
             async def run_graph():
-                config = {"configurable": {"stream_queue": queue}}
+                config = {"configurable": {
+                    "stream_queue": queue,
+                    "langfuse_trace": trace,  # rewriter 的 LLM 埋点挂到同一条 trace
+                }}
                 result = await graph.ainvoke(
                     {"resume": resume_dict, "jd_text": jd_text,
                      "match": match_dict, "rewrites": [], "trace": []},
@@ -294,6 +302,10 @@ async def analyze_stream(
             if not graph_task.done():
                 await graph_task
             result = graph_task.result()
+            observability.end_trace(trace, output={
+                "total_score": match_dict.get("total_score", 0),
+                "rewrites": len(result.get("rewrites", [])),
+            })
             observability.flush()
             # 落库（SQLite 历史，session 粒度）
             analysis_id = await db.save_analysis(
@@ -307,6 +319,8 @@ async def analyze_stream(
             yield _sse("done", {"rewrites": rewrites_count, "analysis_id": analysis_id})
 
         except Exception as exc:
+            observability.end_trace(trace)  # 异常路径也收尾，避免悬挂 trace
+            observability.flush()
             yield _sse("error", {"detail": _llm_error_detail(exc)})
 
     return StreamingResponse(

@@ -1,8 +1,8 @@
-"""Langfuse 全链路可观测层
+"""Langfuse 全链路可观测层（v5 SDK）
 
 设计：
-- 每 Agent 节点 = 1 个 langfuse generation，挂同一条 trace（session = 一次分析请求）
-- 记录：模型、prompt 摘要、输入/输出摘要、token 用量、耗时、prompt 版本标签
+- 一次分析请求 = 1 条 trace（root chain observation）+ 每个 Agent 节点 1 个 generation
+- trace 的 name/session 挂在 root observation 的 OTel attribute 上（v5 语义）
 - LANGFUSE_PUBLIC_KEY 未配置时 observability 关闭（零开销直通）——本地骨架无负担
 """
 import logging
@@ -16,6 +16,24 @@ _client = None
 _initialized = False
 
 
+def _ensure_no_proxy(host: str) -> None:
+    """本机 Langfuse 上报强制绕过系统代理。
+
+    背景：OTLP 导出走 requests.Session()（trust_env 默认开），会读取
+    HTTP_PROXY/HTTPS_PROXY 环境变量；代理（clash/沙箱代理）会间歇性吞掉
+    发往 localhost:3001 的导出请求，BatchSpanProcessor 导出失败后静默丢弃
+    span（不重试）——症状是"随机丢整条 trace"。设 NO_PROXY 是标准解法。
+    """
+    from urllib.parse import urlparse
+    hostname = (urlparse(host).hostname or "localhost").lower()
+    no_proxy = (os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or "")
+    entries = {h.strip().lower() for h in no_proxy.split(",") if h.strip()}
+    entries.update({"localhost", "127.0.0.1", "::1", hostname})
+    joined = ",".join(sorted(entries))
+    os.environ["NO_PROXY"] = joined
+    os.environ["no_proxy"] = joined  # requests/httpx 大小写两个变量都认
+
+
 def _get_client():
     global _client, _initialized
     if _initialized:
@@ -25,9 +43,9 @@ def _get_client():
         return None
     try:
         from langfuse import Langfuse
-        _client = Langfuse(
-            host=os.getenv("LANGFUSE_HOST", "http://localhost:3001"),
-        )
+        host = os.getenv("LANGFUSE_HOST", "http://localhost:3001")
+        _ensure_no_proxy(host)
+        _client = Langfuse(host=host)
     except Exception as exc:
         logger.warning("Langfuse 初始化失败（可观测性关闭）: %s", exc)
     return _client
@@ -37,6 +55,45 @@ def enabled() -> bool:
     return _get_client() is not None
 
 
+def warmup():
+    """服务启动时预初始化 client + OTel provider，消除首个请求的导出竞态"""
+    client = _get_client()
+    if not client:
+        return
+    try:
+        # 起一条最小 trace 并立即结束，确保 span processor/exporter 全链路就绪
+        probe = client.start_observation(name="warmup", as_type="span")
+        probe.end()
+        client.flush()
+        logger.info("Langfuse 预热完成（trace 上报通道就绪）")
+    except Exception as exc:
+        logger.warning("Langfuse 预热失败（可观测性可能降级）: %s", exc)
+
+
+def start_trace(session_id: str, jd_digest: str):
+    """一次分析请求的 trace root（chain observation）。
+
+    v5：name 在 start_observation 上直接给；session/tags 通过 root span 的
+    OTel attribute（session.id / langfuse.trace.tags）设置。
+    """
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        root = client.start_observation(
+            name="resume-analysis",
+            as_type="chain",
+            metadata={"jd_digest": jd_digest[:80]},
+        )
+        # trace 级属性挂在 root observation 上（v5 语义）
+        root._otel_span.set_attribute("langfuse.trace.name", "resume-analysis")
+        root._otel_span.set_attribute("session.id", session_id)
+        return root
+    except Exception as exc:
+        logger.warning("Langfuse start_trace 失败（本次请求不上报）: %s", exc)
+        return None
+
+
 @contextmanager
 def observe_generation(trace, name: str, prompt_version: str, model: str, metadata: dict | None = None):
     """一个 Agent 节点的 generation 埋点：with 块内的执行自动计时/记录"""
@@ -44,34 +101,41 @@ def observe_generation(trace, name: str, prompt_version: str, model: str, metada
     t0 = time.perf_counter()
     gen = None
     if client and trace:
-        gen = trace.start_generation(
-            name=name,
-            model=model,
-            metadata={"prompt_version": prompt_version, **(metadata or {})},
-        )
+        try:
+            gen = trace.start_observation(
+                name=name,
+                as_type="generation",
+                model=model,
+                metadata={"prompt_version": prompt_version, **(metadata or {})},
+            )
+        except Exception as exc:
+            logger.warning("Langfuse generation 埋点失败（%s）: %s", name, exc)
     try:
         yield gen
     except Exception as exc:
         if gen:
-            gen.end(output={"error": str(exc)[:300]}, completion_end_time=_now())
+            try:
+                gen.update(output={"error": str(exc)[:300]}, level="ERROR")
+            except Exception:
+                pass
         raise
     finally:
         if gen:
-            gen.end(
-                completion_end_time=_now(),
-                usage={"total_time_ms": round((time.perf_counter() - t0) * 1000, 1)},
-            )
+            try:
+                gen.end()
+            except Exception:
+                pass
 
 
-def start_trace(session_id: str, jd_digest: str):
-    client = _get_client()
-    if not client:
-        return None
-    return client.trace(
-        name="resume-analysis",
-        session_id=session_id,
-        metadata={"jd_digest": jd_digest[:80]},
-    )
+def end_trace(trace, output: dict | None = None):
+    """结束 trace root（成功路径）"""
+    if trace:
+        try:
+            if output is not None:
+                trace.update(output=output)
+            trace.end()
+        except Exception as exc:
+            logger.warning("Langfuse end_trace 失败: %s", exc)
 
 
 def flush():
@@ -80,8 +144,3 @@ def flush():
             _client.flush()
         except Exception:
             pass
-
-
-def _now():
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc)

@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 
 MAX_REWRITES = 6  # 控制成本与信噪比：单次最多改写条数
 
+
+def settings_model() -> str:
+    """当前 LLM 模型名（Langfuse 埋点用；懒加载避免循环导入）"""
+    from app.config import settings
+    return settings.model
+
 REWRITE_PROMPT = """你是简历改写专家。针对一条匹配不足的 JD 要求，给出改写建议。
 
 背景：简历原文 + 目标 JD。你只处理这一条要求：
@@ -46,6 +52,13 @@ def _get_queue(config: dict | None):
     return (config.get("configurable") or {}).get("stream_queue")
 
 
+def _get_langfuse_trace(config: dict | None):
+    """从 LangGraph config 拿本次请求的 Langfuse trace root（无则 None，未启用/非流式）"""
+    if not config:
+        return None
+    return (config.get("configurable") or {}).get("langfuse_trace")
+
+
 def select_rewrite_targets(requirements: list[dict]) -> list[dict]:
     """筛选可改写条目：partial 优先，其次 miss 的 hard_skill/project（指导性）"""
     partial = [r for r in requirements if r["status"] == "partial"]
@@ -56,8 +69,9 @@ def select_rewrite_targets(requirements: list[dict]) -> list[dict]:
     return (partial + miss_actionable)[:MAX_REWRITES]
 
 
-async def _rewrite_one(resume: dict, req: dict, jd_hint: str) -> dict:
+async def _rewrite_one(resume: dict, req: dict, jd_hint: str, lf_trace=None) -> dict:
     """单条改写：一次小 LLM 调用，独立校验（单条失败不拖垮整批）"""
+    from app import observability
     requirement_block = (
         f"要求：{req['requirement']}\n类别：{req['category']}\n"
         f"当前判定：{req['status']}\n简历证据：{req['evidence'] or '（无）'}"
@@ -66,24 +80,35 @@ async def _rewrite_one(resume: dict, req: dict, jd_hint: str) -> dict:
         {"role": "system", "content": REWRITE_PROMPT.format(requirement_block=requirement_block)},
         {"role": "user", "content": f"【简历 JSON】\n{resume}\n\n【JD 摘要】\n{jd_hint[:300]}"},
     ]
-    for attempt in range(2):
-        data = await chat_json(messages)
-        try:
-            return RewriteSuggestion(**data).model_dump() | {
-                "for_requirement": req["requirement"],
-                "was_status": req["status"],
-            }
-        except ValidationError as exc:
-            logger.warning("改写条目校验失败（第 %d 次）: %s", attempt + 1, exc.error_count())
-            messages = messages + [
-                {"role": "assistant", "content": str(data)},
-                {"role": "user", "content": f"校验失败：{exc.errors(include_url=False)[:3]}，重新输出完整 JSON。"},
-            ]
+    with observability.observe_generation(
+        lf_trace, f"rewriter", "rewriter-v2", settings_model(),
+        metadata={"requirement": req["requirement"][:60]},
+    ) as gen:
+        for attempt in range(2):
+            data = await chat_json(messages)
+            try:
+                result = RewriteSuggestion(**data).model_dump() | {
+                    "for_requirement": req["requirement"],
+                    "was_status": req["status"],
+                }
+                if gen:
+                    try:
+                        gen.update(output={"rewritten": result["rewritten"][:120]})
+                    except Exception:
+                        pass
+                return result
+            except ValidationError as exc:
+                logger.warning("改写条目校验失败（第 %d 次）: %s", attempt + 1, exc.error_count())
+                messages = messages + [
+                    {"role": "assistant", "content": str(data)},
+                    {"role": "user", "content": f"校验失败：{exc.errors(include_url=False)[:3]}，重新输出完整 JSON。"},
+                ]
     raise ValueError(f"改写失败：{req['requirement']}")
 
 
 async def rewrite(resume: dict, requirements: list[dict], config: dict | None = None) -> list[dict]:
     queue = _get_queue(config)
+    lf_trace = _get_langfuse_trace(config)
     targets = select_rewrite_targets(requirements)
     if not targets:
         return []
@@ -94,7 +119,7 @@ async def rewrite(resume: dict, requirements: list[dict], config: dict | None = 
     # 条目级并发：每条独立调用，完成一条推一条
     async def one_with_push(req: dict) -> dict:
         try:
-            item = await _rewrite_one(resume, req, jd_hint="")
+            item = await _rewrite_one(resume, req, jd_hint="", lf_trace=lf_trace)
             ok = True
         except Exception as exc:  # 单条失败降级为占位说明，不拖垮整批
             logger.warning("单条改写失败: %s", exc)
