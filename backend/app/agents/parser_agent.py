@@ -32,7 +32,7 @@ PARSER_PROMPT = """你是简历解析器。把用户提供的简历文本解析�
 - 只输出 JSON，不要任何解释或 markdown 代码块"""
 
 
-async def parse_resume(resume_text: str) -> dict:
+async def parse_resume(resume_text: str, usage_out: list | None = None) -> dict:
     if is_stub():
         return _stub()
 
@@ -43,7 +43,7 @@ async def parse_resume(resume_text: str) -> dict:
 
     last_err: Exception | None = None
     for attempt in range(1, RETRY_TIMES + 1):
-        data = await chat_json(messages)
+        data = await chat_json(messages, usage_out=usage_out)
         try:
             return ResumeStructured(**data).model_dump()
         except ValidationError as exc:

@@ -5,6 +5,7 @@
 - trace 的 name/session 挂在 root observation 的 OTel attribute 上（v5 语义）
 - LANGFUSE_PUBLIC_KEY 未配置时 observability 关闭（零开销直通）——本地骨架无负担
 """
+import json
 import logging
 import os
 import time
@@ -45,7 +46,10 @@ def _get_client():
         from langfuse import Langfuse
         host = os.getenv("LANGFUSE_HOST", "http://localhost:3001")
         _ensure_no_proxy(host)
-        _client = Langfuse(host=host)
+        # environment 标签（default/e2e/production…）：Langfuse UI 可按环境筛选，
+        # E2E 回归不再混进真实使用数据（run_e2e.py 会设 LANGFUSE_TRACING_ENVIRONMENT=e2e）
+        env = {"environment": os.getenv("LANGFUSE_TRACING_ENVIRONMENT") or None}
+        _client = Langfuse(host=host, **{k: v for k, v in env.items() if v})
     except Exception as exc:
         logger.warning("Langfuse 初始化失败（可观测性关闭）: %s", exc)
     return _client
@@ -70,7 +74,7 @@ def warmup():
         logger.warning("Langfuse 预热失败（可观测性可能降级）: %s", exc)
 
 
-def start_trace(session_id: str, jd_digest: str):
+def start_trace(session_id: str, jd_digest: str, tags: list[str] | None = None):
     """一次分析请求的 trace root（chain observation）。
 
     v5：name 在 start_observation 上直接给；session/tags 通过 root span 的
@@ -88,6 +92,8 @@ def start_trace(session_id: str, jd_digest: str):
         # trace 级属性挂在 root observation 上（v5 语义）
         root._otel_span.set_attribute("langfuse.trace.name", "resume-analysis")
         root._otel_span.set_attribute("session.id", session_id)
+        if tags:
+            root._otel_span.set_attribute("langfuse.trace.tags", json.dumps(tags))
         return root
     except Exception as exc:
         logger.warning("Langfuse start_trace 失败（本次请求不上报）: %s", exc)
@@ -95,8 +101,13 @@ def start_trace(session_id: str, jd_digest: str):
 
 
 @contextmanager
-def observe_generation(trace, name: str, prompt_version: str, model: str, metadata: dict | None = None):
-    """一个 Agent 节点的 generation 埋点：with 块内的执行自动计时/记录"""
+def observe_generation(trace, name: str, prompt_version: str, model: str,
+                       metadata: dict | None = None, usage_out: list | None = None):
+    """一个 Agent 节点的 generation 埋点：with 块内的执行自动计时/记录。
+
+    usage_out：传入与 chat(usage_out=...) 共享的列表，块结束时汇总
+    LLM token 用量写入 generation 的 usage_details（Langfuse 据此算成本）。
+    """
     client = _get_client()
     t0 = time.perf_counter()
     gen = None
@@ -122,6 +133,13 @@ def observe_generation(trace, name: str, prompt_version: str, model: str, metada
     finally:
         if gen:
             try:
+                if usage_out:
+                    # token 用量汇总（重试/多轮调用累加），Langfuse 据此计算成本
+                    gen.update(usage_details={
+                        "input": sum(u.get("input", 0) for u in usage_out),
+                        "output": sum(u.get("output", 0) for u in usage_out),
+                        "total": sum(u.get("total", 0) for u in usage_out),
+                    })
                 gen.end()
             except Exception:
                 pass

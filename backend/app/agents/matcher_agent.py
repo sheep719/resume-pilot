@@ -43,7 +43,7 @@ dimension_scores 是四个类别的整体印象分（0-100），重要条目权�
 只输出 JSON，不要任何解释或 markdown 代码块。"""
 
 
-async def match_jd(resume: dict, jd_text: str) -> dict:
+async def match_jd(resume: dict, jd_text: str, usage_out: list | None = None) -> dict:
     if is_stub():
         return _stub()
 
@@ -54,7 +54,7 @@ async def match_jd(resume: dict, jd_text: str) -> dict:
 
     last_err: Exception | None = None
     for attempt in range(1, RETRY_TIMES + 1):
-        data = await chat_json(messages)
+        data = await chat_json(messages, usage_out=usage_out)
         try:
             result = MatchResult(**data)
             # 总分代码计算，不信 LLM 算术

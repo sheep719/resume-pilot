@@ -11,7 +11,7 @@
 [![Next.js](https://img.shields.io/badge/frontend-Next.js%2015-black)]()
 [![Langfuse](https://img.shields.io/badge/observability-Langfuse%20self--hosted-orange)]()
 [![Docker](https://img.shields.io/badge/deploy-Docker%20Compose-2496ED)]()
-[![tests](https://img.shields.io/badge/tests-pytest%2012%2F12%20%2B%203--JD%20E2E-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-pytest%2021%2F21%20%2B%2010--JD%20E2E-brightgreen)]()
 
 ## 它解决什么问题
 
@@ -152,7 +152,7 @@ cd backend
 
 - [ ] v1.1 条件边阈值基于真实反馈校准（当前 85 为经验值）
 - [ ] v1.1 JD 拆解原子化约束（修复两次拆解粒度不一致：7 vs 14 条）
-- [ ] v1.2 Langfuse 全量激活 + 成本看板（token/次分析）
+- [x] v1.2 Langfuse 全量激活 + 成本看板（token/次分析，trace 按 session 聚合，E2E 回归独立标签）
 - [ ] v1.2 多简历对比（同 JD 下不同版本简历评分 diff）
 - [ ] v1.3 OCR 扫描件支持（当前明确拒绝并提示，边界即设计）
 

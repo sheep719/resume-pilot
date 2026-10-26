@@ -80,12 +80,13 @@ async def _rewrite_one(resume: dict, req: dict, jd_hint: str, lf_trace=None) -> 
         {"role": "system", "content": REWRITE_PROMPT.format(requirement_block=requirement_block)},
         {"role": "user", "content": f"【简历 JSON】\n{resume}\n\n【JD 摘要】\n{jd_hint[:300]}"},
     ]
+    usage_out: list = []  # token 用量收集（Langfuse 成本看板）
     with observability.observe_generation(
         lf_trace, f"rewriter", "rewriter-v2", settings_model(),
-        metadata={"requirement": req["requirement"][:60]},
+        metadata={"requirement": req["requirement"][:60]}, usage_out=usage_out,
     ) as gen:
         for attempt in range(2):
-            data = await chat_json(messages)
+            data = await chat_json(messages, usage_out=usage_out)
             try:
                 result = RewriteSuggestion(**data).model_dump() | {
                     "for_requirement": req["requirement"],

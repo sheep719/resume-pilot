@@ -11,6 +11,7 @@ v1.2 升级（借鉴可靠性清单 #3，个人项目裁剪版）：
 """
 import asyncio
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -20,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+# 环境隔离：E2E 回归的 trace 打 e2e 标签，与真实使用数据在 Langfuse UI 分开筛选
+os.environ.setdefault("LANGFUSE_TRACING_ENVIRONMENT", "e2e")
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

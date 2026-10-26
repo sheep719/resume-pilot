@@ -217,8 +217,11 @@ async def analyze_stream(
     async def event_gen():
         queue: asyncio.Queue = asyncio.Queue()
         import uuid
+        # E2E 回归（session 前缀约定）打 trace 标签，与真实使用数据在 Langfuse 分开筛选
+        trace_tags = ["e2e"] if session_id.startswith("e2e") else None
         trace = observability.start_trace(
-            session_id=str(uuid.uuid4())[:8], jd_digest=jd_text
+            session_id=str(uuid.uuid4())[:8] if session_id == "anonymous" else session_id,
+            jd_digest=jd_text, tags=trace_tags,
         )
         yield _sse("progress", {"node": "parser", "status": "running"})
 
@@ -232,8 +235,9 @@ async def analyze_stream(
                 active_warnings = cached["warnings"]
                 yield _sse("progress", {"node": "parser", "status": "done", "cached": True})
             else:
-                with observability.observe_generation(trace, "parser", "parser-v2", settings.model):
-                    resume_dict = await parse_resume(resume_text)
+                parser_usage: list = []
+                with observability.observe_generation(trace, "parser", "parser-v2", settings.model, usage_out=parser_usage):
+                    resume_dict = await parse_resume(resume_text, usage_out=parser_usage)
                 active_warnings = warnings
                 parse_cache.put_cached_parse(resume_text, resume_dict, active_warnings)
                 yield _sse("progress", {"node": "parser", "status": "done"})
@@ -241,8 +245,9 @@ async def analyze_stream(
 
             # Agent 2
             yield _sse("progress", {"node": "matcher", "status": "running"})
-            with observability.observe_generation(trace, "matcher", "matcher-v2", settings.model):
-                match_dict = await match_jd(resume_dict, jd_text)
+            matcher_usage: list = []
+            with observability.observe_generation(trace, "matcher", "matcher-v2", settings.model, usage_out=matcher_usage):
+                match_dict = await match_jd(resume_dict, jd_text, usage_out=matcher_usage)
             yield _sse("progress", {"node": "matcher", "status": "done"})
             yield _sse("match", match_dict)
 
