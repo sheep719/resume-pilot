@@ -59,6 +59,12 @@ def extract_pdf(file_bytes: bytes) -> PDFExtractResult:
             f"检测到 {two_column_pages} 页疑似双栏布局，段落顺序可能与视觉顺序不一致，解析结果请人工复核"
         )
 
+    # 页数软限制：超长简历 LLM 解析质量下降（注意力稀释 + 可能触顶上下文），提示但不拒绝
+    if pages > 5:
+        warnings.append(
+            f"简历共 {pages} 页，内容较长——解析与匹配的准确度可能下降，建议精简到 1-2 页核心内容"
+        )
+
     return PDFExtractResult(text=text, pages=pages, warnings=warnings)
 
 

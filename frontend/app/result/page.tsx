@@ -6,6 +6,7 @@ import { useAnalysis } from "@/lib/store";
 import ScoreGauge from "@/components/ScoreGauge";
 import RadarChart from "@/components/RadarChart";
 import RewriteCard from "@/components/RewriteCard";
+import HistoryPanel from "@/components/HistoryPanel";
 import type { JDRequirement } from "@/lib/types";
 
 const STAGE_TIPS = [
@@ -139,6 +140,9 @@ export default function ResultPage() {
                       <p className="mt-1 text-xs text-gray-500">
                         {r.status === "partial" ? "简历有相关内容，但深度或证据不够突出" : "简历中还没有体现这条要求"}
                       </p>
+                      {r.status === "partial" && r.evidence && (
+                        <p className="mt-1 truncate text-xs text-gray-400">你的简历依据：{r.evidence}</p>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -174,6 +178,9 @@ export default function ResultPage() {
               🎉 简历与这个岗位高度匹配，没有需要改进的条目。
             </div>
           )}
+
+          {/* 历史记录：分析完直接回看，不用跳回首页（组件自带标题与上边距） */}
+          <HistoryPanel />
         </>
       )}
     </main>

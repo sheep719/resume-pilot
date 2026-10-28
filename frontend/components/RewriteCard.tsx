@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { RewriteSuggestion } from "@/lib/types";
 
 /** 改写建议卡片：直接可用（基于现有内容）与补充方向（占位模板）两种形态 */
@@ -47,8 +48,38 @@ export default function RewriteCard({ item }: { item: RewriteSuggestion }) {
         </div>
       )}
 
+      <div className="mt-3 flex justify-end">
+        <CopyButton text={item.rewritten} />
+      </div>
+
       <ValidationBanner validation={item.validation} />
     </div>
+  );
+}
+
+/** 一键复制建议文案（剪贴板 API 不可用时降级为 prompt 手动复制） */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      window.prompt("复制以下文本：", text);
+    }
+  }
+  return (
+    <button
+      onClick={copy}
+      className={`rounded-md border px-2.5 py-1 text-xs transition ${
+        copied
+          ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+          : "border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-700"
+      }`}
+    >
+      {copied ? "✓ 已复制" : "📋 复制建议"}
+    </button>
   );
 }
 

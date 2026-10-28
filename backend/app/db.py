@@ -2,16 +2,21 @@
 
 设计：
 - 标准库 sqlite3（零依赖）+ asyncio.to_thread 包装，避免阻塞事件循环
-- 库文件 backend/data/resumepilot.db（gitignore）
+- 库文件 backend/data/resumepilot.db（gitignore）；E2E 回归经 RP_DB_PATH
+  环境变量指向独立文件，避免 e2e-verify 垃圾数据混进用户历史
 - 一个 session（浏览器 localStorage 生成 UUID）对应多条分析记录
 """
 import asyncio
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parents[1] / "data" / "resumepilot.db"
+DB_PATH = Path(
+    os.environ.get("RP_DB_PATH")
+    or Path(__file__).resolve().parents[1] / "data" / "resumepilot.db"
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS analyses (
@@ -32,7 +37,9 @@ CREATE INDEX IF NOT EXISTS idx_analyses_session ON analyses(session_id, created_
 
 def _conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    # timeout=10：FastAPI 并发写入时 SQLite 默认 0s 立即报 database is locked，
+    # 10s 等待窗口让 writer 串行完成（写操作都经 asyncio.to_thread 串到线程池，量小足够）
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 

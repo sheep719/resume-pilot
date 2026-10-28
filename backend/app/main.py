@@ -158,18 +158,37 @@ def _llm_error_detail(exc: Exception) -> str:
         return "LLM 账户余额不足（402），请充值后重试，或清空 DEEPSEEK_API_KEY 使用 stub 模式"
     if "401" in msg:
         return "LLM API key 无效（401），请检查 backend/.env 中的 DEEPSEEK_API_KEY"
+    if "429" in msg or "rate limit" in msg.lower() or "Rate limit" in msg:
+        return "LLM 服务限流（429），请求太频繁，请稍等几秒后重试"
+    if "timed out" in msg.lower() or "timeout" in msg.lower() or "Timeout" in msg:
+        return "LLM 调用超时（60s）——服务端响应过慢，请稍后重试；连续超时请检查网络或 LLM 服务状态"
     return f"LLM 调用失败：{msg[:200]}"
 
 
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 async def analyze(req: AnalyzeRequest):
-    result = await graph.ainvoke({"resume_text": req.resume_text, "jd_text": req.jd_text})
-    return AnalyzeResponse(
-        resume=result.get("resume"),
-        match=result.get("match"),
-        rewrites=result.get("rewrites", []),
-        trace=result.get("trace", []),
-    )
+    # 非流式路径：图内节点自己埋点（parser/matcher/rewriter 经 config 拿 trace root）
+    trace = observability.start_trace(session_id="api-nonstream", jd_digest=req.jd_text)
+    try:
+        result = await graph.ainvoke(
+            {"resume_text": req.resume_text, "jd_text": req.jd_text},
+            config={"configurable": {"langfuse_trace": trace}},
+        )
+        observability.end_trace(trace, output={
+            "total_score": (result.get("match") or {}).get("total_score", 0),
+            "rewrites": len(result.get("rewrites", [])),
+        })
+        return AnalyzeResponse(
+            resume=result.get("resume"),
+            match=result.get("match"),
+            rewrites=result.get("rewrites", []),
+            trace=result.get("trace", []),
+        )
+    except Exception:
+        observability.end_trace(trace)  # 异常路径收尾
+        raise
+    finally:
+        observability.flush()
 
 
 @app.post("/api/analyze/stream")
@@ -254,7 +273,8 @@ async def analyze_stream(
             # 条件边判定（与 LangGraph route_after_match 同一阈值逻辑）
             from app.schemas import SKIP_REWRITE_THRESHOLD
             if match_dict["total_score"] > SKIP_REWRITE_THRESHOLD:
-                analysis_id = await db.save_analysis(
+                # E2E 回归流量（session 前缀约定）不落库，避免测试数据混进用户历史
+                analysis_id = -1 if session_id.startswith("e2e") else await db.save_analysis(
                     session_id=session_id, filename=getattr(file, "filename", None),
                     jd_digest=jd_text, total_score=match_dict.get("total_score", 0),
                     rewrites_count=0, resume=resume_dict,
@@ -287,7 +307,7 @@ async def analyze_stream(
 
             graph_task = asyncio.create_task(run_graph())
 
-            # 边跑边推：queue 消息即时下发；图异常立即冒出（不再被 create_task 吞掉）
+            # 边跑边推：queue 消息即时下发；图异常立即冒出（不让 create_task 吞掉）
             rewrites_count = 0
             while True:
                 get_task = asyncio.create_task(queue.get())
@@ -312,13 +332,16 @@ async def analyze_stream(
                 "rewrites": len(result.get("rewrites", [])),
             })
             observability.flush()
-            # 落库（SQLite 历史，session 粒度）
-            analysis_id = await db.save_analysis(
-                session_id=session_id, filename=getattr(file, "filename", None),
-                jd_digest=jd_text, total_score=match_dict.get("total_score", 0),
-                rewrites_count=rewrites_count, resume=resume_dict,
-                match=match_dict, rewrites=result.get("rewrites", []),
-            )
+            # 落库（SQLite 历史，session 粒度；E2E 流量跳过）
+            if session_id.startswith("e2e"):
+                analysis_id = -1
+            else:
+                analysis_id = await db.save_analysis(
+                    session_id=session_id, filename=getattr(file, "filename", None),
+                    jd_digest=jd_text, total_score=match_dict.get("total_score", 0),
+                    rewrites_count=rewrites_count, resume=resume_dict,
+                    match=match_dict, rewrites=result.get("rewrites", []),
+                )
             yield _sse("progress", {"node": "rewriter", "status": "done", "count": rewrites_count})
             yield _sse("trace", {"trace": result.get("trace", []), "skipped": None})
             yield _sse("done", {"rewrites": rewrites_count, "analysis_id": analysis_id})
@@ -327,6 +350,15 @@ async def analyze_stream(
             observability.end_trace(trace)  # 异常路径也收尾，避免悬挂 trace
             observability.flush()
             yield _sse("error", {"detail": _llm_error_detail(exc)})
+        finally:
+            # 客户端断连/刷新（GeneratorExit 是 BaseException，except Exception 抓不到）：
+            # 正常/异常路径已 end 过 trace（幂等 no-op），这里只兜断连悬挂的情况
+            try:
+                if trace is not None and trace._otel_span.is_recording():
+                    observability.end_trace(trace)
+                    observability.flush()
+            except Exception:
+                pass
 
     return StreamingResponse(
         event_gen(),
