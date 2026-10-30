@@ -8,7 +8,7 @@ export default function RewriteCard({ item }: { item: RewriteSuggestion }) {
   const isGuidance = item.was_status === "miss";
   return (
     <div
-      className="rounded-xl border border-gray-200 bg-white p-5"
+      className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
       style={{ animation: "fadeSlideIn 0.4s ease" }}
     >
       <div className="flex items-center justify-between gap-3">

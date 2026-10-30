@@ -1,9 +1,10 @@
 @import "tailwindcss";
 
+/* ---------- 动画 ---------- */
 @keyframes fadeSlideIn {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
@@ -11,3 +12,64 @@
   }
 }
 
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 加载态三点跳动 */
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-5px); opacity: 1; }
+}
+
+/* 背景光斑缓慢浮动 */
+@keyframes drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(30px, -20px) scale(1.05); }
+}
+
+.animate-fade-slide {
+  animation: fadeSlideIn 0.5s ease both;
+}
+.animate-fade-in {
+  animation: fadeIn 0.4s ease both;
+}
+
+/* 错落入场：配合内联 animation-delay 使用 */
+.stagger > * {
+  animation: fadeSlideIn 0.5s ease both;
+}
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.10s; }
+.stagger > *:nth-child(4) { animation-delay: 0.14s; }
+.stagger > *:nth-child(5) { animation-delay: 0.18s; }
+.stagger > *:nth-child(6) { animation-delay: 0.22s; }
+
+/* ---------- 基础质感 ---------- */
+::selection {
+  background: rgb(199 210 254);
+  color: rgb(30 27 75);
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(209 213 219);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(156 163 175);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 数字用等宽数字（分数、时间更整齐） */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
