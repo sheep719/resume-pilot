@@ -26,6 +26,8 @@ interface AnalysisState {
   error: string | null;
   finished: boolean;
   started: boolean;
+  /** 历史记录版本号：每次分析完成 +1，HistoryPanel 据此自动刷新 */
+  historyVersion: number;
 
   start: () => Promise<void>;
   reset: () => void;
@@ -55,6 +57,7 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
   const [started, setStarted] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const ranRef = useRef(false); // 防结果页严格模式双执行重复请求
 
   const [sessionId] = useState(() => {
@@ -119,6 +122,7 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
             break;
           case "done":
             setFinished(true);
+            setHistoryVersion((v) => v + 1); // 触发 HistoryPanel 刷新，新记录立即可见
             break;
           case "error":
             setError(data.detail);
@@ -137,7 +141,7 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
       value={{
         file, jdText, setInputs, sessionId,
         progress, resume, warnings, match, rewrites, trace,
-        skippedReason, error, finished, started,
+        skippedReason, error, finished, started, historyVersion,
         start, reset,
       }}
     >

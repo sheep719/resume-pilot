@@ -66,7 +66,8 @@ def warmup():
         return
     try:
         # 起一条最小 trace 并立即结束，确保 span processor/exporter 全链路就绪
-        probe = client.start_observation(name="warmup", as_type="span")
+        # level=DEBUG：预热探针不打乱 Langfuse 默认视图（DEBUG 级默认被过滤）
+        probe = client.start_observation(name="warmup", as_type="span", level="DEBUG")
         probe.end()
         client.flush()
         logger.info("Langfuse 预热完成（trace 上报通道就绪）")

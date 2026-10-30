@@ -8,6 +8,7 @@
 import asyncio
 import json
 import tempfile
+import uuid
 from pathlib import Path
 
 import httpx
@@ -22,7 +23,7 @@ from app.config import settings
 from app.graph.workflow import build_graph
 from app.mcp_client import parse_resume_pdf_via_mcp, warmup_mcp
 from app.pdf import NotTextPDFError, UnsupportedFileError, extract_document, extract_pdf
-from app.schemas import AnalyzeRequest, AnalyzeResponse
+from app.schemas import SKIP_REWRITE_THRESHOLD, AnalyzeRequest, AnalyzeResponse
 
 app = FastAPI(title="ResumePilot API", version="0.1.0")
 
@@ -44,6 +45,13 @@ async def startup_warmup():
     # Langfuse 客户端预热：消除首个请求时 OTel provider 初始化竞态
     # （否则进程重启后第一次分析的 root span 会静默丢失）
     observability.warmup()
+
+
+@app.on_event("shutdown")
+async def shutdown_cleanup():
+    """优雅关闭：释放 MCP server 子进程，避免 Docker 重启时孤儿化"""
+    from app.mcp_client import close as close_mcp
+    await close_mcp()
 
 
 @app.get("/health")
@@ -69,28 +77,30 @@ async def ping_frontend():
 
 @app.post("/api/parse", response_model=None)
 async def parse_endpoint(file: UploadFile = File(...)):
-    """Agent 1 独立入口：上传简历 PDF → 提取文本 → LLM 结构化解析
+    """Agent 1 独立入口：上传简历 PDF/DOCX → 提取文本 → LLM 结构化解析
 
     验收：用样例简历实测，四段（教育/经历/技能/项目）解析正确
     """
-    if not (file.filename or "").lower().endswith(".pdf"):
-        raise HTTPException(400, "只支持 PDF 文件")
+    name = (file.filename or "").lower()
+    if not (name.endswith(".pdf") or name.endswith(".docx")):
+        raise HTTPException(400, "只支持 PDF / DOCX 文件")
 
     raw = await file.read()
     if len(raw) > 10 * 1024 * 1024:
-        raise HTTPException(413, "PDF 超过 10MB 上限")
+        raise HTTPException(413, "文件超过 10MB 上限")
 
     # 架构决策：解析走 MCP（工具独立进程），失败自动降级进程内直调
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+    # 临时文件后缀跟随原始扩展名（MCP 工具按扩展名路由解析器）
+    suffix = ".docx" if name.endswith(".docx") else ".pdf"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(raw)
         tmp_path = tmp.name
     try:
         result = await parse_resume_pdf_via_mcp(tmp_path)
     except Exception as exc:
-        Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(502, _llm_error_detail(exc))
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        Path(tmp_path).unlink(missing_ok=True)  # 单次清理：成功/异常都走这里
 
     return {
         "filename": file.filename,
@@ -117,18 +127,23 @@ async def match_endpoint(
     验收：粘贴 JD 能输出评分
     """
     if file is None and not resume:
-        raise HTTPException(400, "需要上传 PDF 文件或提供已解析的 resume JSON")
+        raise HTTPException(400, "需要上传 PDF/DOCX 文件或提供已解析的 resume JSON")
+    if len(jd_text) > 20_000:
+        raise HTTPException(413, "岗位 JD 过长（2 万字符上限）——请粘贴核心职责与要求部分")
 
     if file is not None:
-        if not (file.filename or "").lower().endswith(".pdf"):
-            raise HTTPException(400, "只支持 PDF 文件")
+        name = (file.filename or "").lower()
+        if not (name.endswith(".pdf") or name.endswith(".docx")):
+            raise HTTPException(400, "只支持 PDF / DOCX 文件")
         raw = await file.read()
         if len(raw) > 10 * 1024 * 1024:
-            raise HTTPException(413, "PDF 超过 10MB 上限")
+            raise HTTPException(413, "文件超过 10MB 上限")
         try:
-            extracted = extract_pdf(raw)
+            extracted = extract_document(name, raw)
         except NotTextPDFError as exc:
             raise HTTPException(422, str(exc))
+        except UnsupportedFileError as exc:
+            raise HTTPException(400, str(exc))
         try:
             resume_dict = await parse_resume(extracted.text)
         except ValueError as exc:
@@ -211,6 +226,8 @@ async def analyze_stream(
     """
     if file is None and not resume:
         raise HTTPException(400, "需要上传 PDF 文件或提供已解析的 resume JSON")
+    if len(jd_text) > 20_000:
+        raise HTTPException(413, "岗位 JD 过长（2 万字符上限）——请粘贴核心职责与要求部分")
 
     if file is not None:
         name = (file.filename or "").lower()
@@ -235,7 +252,6 @@ async def analyze_stream(
 
     async def event_gen():
         queue: asyncio.Queue = asyncio.Queue()
-        import uuid
         # E2E 回归（session 前缀约定）打 trace 标签，与真实使用数据在 Langfuse 分开筛选
         trace_tags = ["e2e"] if session_id.startswith("e2e") else None
         trace = observability.start_trace(
@@ -271,7 +287,6 @@ async def analyze_stream(
             yield _sse("match", match_dict)
 
             # 条件边判定（与 LangGraph route_after_match 同一阈值逻辑）
-            from app.schemas import SKIP_REWRITE_THRESHOLD
             if match_dict["total_score"] > SKIP_REWRITE_THRESHOLD:
                 # E2E 回归流量（session 前缀约定）不落库，避免测试数据混进用户历史
                 analysis_id = -1 if session_id.startswith("e2e") else await db.save_analysis(
@@ -359,6 +374,10 @@ async def analyze_stream(
                     observability.flush()
             except Exception:
                 pass
+            # 断连时图任务可能还在跑（rewriter 的 LLM 调用）——取消它，避免白烧钱
+            gt = locals().get("graph_task")
+            if gt is not None and not gt.done():
+                gt.cancel()
 
     return StreamingResponse(
         event_gen(),

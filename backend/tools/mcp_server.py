@@ -16,22 +16,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastmcp import FastMCP
 
 from app.agents.parser_agent import parse_resume
-from app.pdf import NotTextPDFError, extract_pdf
+from app.pdf import NotTextPDFError, UnsupportedFileError, extract_document
 
 mcp = FastMCP("resumepilot-tools")
 
 
 @mcp.tool
 def parse_resume_pdf(pdf_path: str) -> dict:
-    """解析简历 PDF：提取文本 + LLM 结构化（教育/经历/技能/项目四段 JSON）
+    """解析简历文档（PDF/DOCX）：提取文本 + LLM 结构化（教育/经历/技能/项目四段 JSON）
 
     Args:
-        pdf_path: PDF 文件绝对路径
+        pdf_path: 文件绝对路径（按扩展名路由解析器：.pdf → pdfplumber，.docx → python-docx）
     """
     raw = Path(pdf_path).read_bytes()
+    name = Path(pdf_path).name
     try:
-        extracted = extract_pdf(raw)
-    except NotTextPDFError as exc:
+        extracted = extract_document(name, raw)
+    except (NotTextPDFError, UnsupportedFileError) as exc:
         return {"ok": False, "error": str(exc)}
 
     import asyncio

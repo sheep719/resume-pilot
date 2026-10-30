@@ -4,6 +4,7 @@
 - 只处理文本型文件；图片型/扫描件 PDF 直接报错提示，不搞 OCR
 - 检测双栏布局（常见解析坑），提取结果带警告
 """
+import io
 from dataclasses import dataclass, field
 
 import pdfplumber
@@ -26,8 +27,6 @@ class UnsupportedFileError(Exception):
 
 def extract_pdf(file_bytes: bytes) -> PDFExtractResult:
     """提取 PDF 全文文本，附布局警告"""
-    import io
-
     warnings: list[str] = []
 
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
@@ -70,8 +69,6 @@ def extract_pdf(file_bytes: bytes) -> PDFExtractResult:
 
 def extract_docx(file_bytes: bytes) -> PDFExtractResult:
     """提取 DOCX 全文文本（段落 + 表格，按文档顺序拼接）"""
-    import io
-
     import docx  # python-docx
 
     d = docx.Document(io.BytesIO(file_bytes))

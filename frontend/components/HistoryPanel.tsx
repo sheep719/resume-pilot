@@ -13,9 +13,10 @@ interface HistoryItem {
   created_at: number;
 }
 
-/** 历史记录面板：本次浏览器会话（localStorage session ID）的分析列表 */
+/** 历史记录面板：本次浏览器会话（localStorage session ID）的分析列表
+ *  historyVersion 变化（每次分析完成）时自动刷新，新记录立即可见 */
 export default function HistoryPanel() {
-  const { sessionId } = useAnalysis();
+  const { sessionId, historyVersion } = useAnalysis();
   const [items, setItems] = useState<HistoryItem[] | null>(null);
 
   useEffect(() => {
@@ -24,7 +25,7 @@ export default function HistoryPanel() {
       .then((r) => (r.ok ? r.json() : []))
       .then(setItems)
       .catch(() => setItems([]));
-  }, [sessionId]);
+  }, [sessionId, historyVersion]);
 
   if (!items || items.length === 0) return null;
 

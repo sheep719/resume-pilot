@@ -24,10 +24,16 @@ def is_stub() -> bool:
     return not settings.api_key
 
 
+_client_cache: Any = None  # AsyncOpenAI 单例：底层 httpx 连接池复用（TCP keep-alive）
+
+
 def _client():
     from openai import AsyncOpenAI  # 延迟导入，stub 模式不强依赖 openai 包
 
-    return AsyncOpenAI(api_key=settings.api_key, base_url=settings.base_url)
+    global _client_cache
+    if _client_cache is None:
+        _client_cache = AsyncOpenAI(api_key=settings.api_key, base_url=settings.base_url)
+    return _client_cache
 
 
 async def chat(

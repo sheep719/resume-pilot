@@ -23,6 +23,7 @@ from app import observability
 from app.agents.matcher_agent import match_jd
 from app.agents.parser_agent import parse_resume
 from app.agents.rewriter_agent import rewrite
+from app.config import settings
 from app.llm import is_stub
 from app.schemas import SKIP_REWRITE_THRESHOLD
 
@@ -49,18 +50,13 @@ def _lf_trace(config: RunnableConfig):
     return (config.get("configurable") or {}).get("langfuse_trace")
 
 
-def _model_name() -> str:
-    from app.config import settings
-    return settings.model
-
-
 async def parser_node(state: PipelineState, config: RunnableConfig) -> dict:
     if state.get("resume"):  # 幂等跳过：流式端点已预跑 Agent 1
         return {"trace": state.get("trace", []) + [{"node": "parser", "ms": 0, "skipped_precomputed": True}]}
     t0 = time.perf_counter()
     usage_out: list = []
     with observability.observe_generation(
-        _lf_trace(config), "parser", "parser-v2", _model_name(), usage_out=usage_out
+        _lf_trace(config), "parser", "parser-v2", settings.model, usage_out=usage_out
     ):
         resume = await parse_resume(state["resume_text"], usage_out=usage_out)
     return {"resume": resume, "trace": _trace(state, "parser", (time.perf_counter() - t0) * 1000)}
@@ -72,7 +68,7 @@ async def matcher_node(state: PipelineState, config: RunnableConfig) -> dict:
     t0 = time.perf_counter()
     usage_out: list = []
     with observability.observe_generation(
-        _lf_trace(config), "matcher", "matcher-v2", _model_name(), usage_out=usage_out
+        _lf_trace(config), "matcher", "matcher-v2", settings.model, usage_out=usage_out
     ):
         match = await match_jd(state["resume"], state["jd_text"], usage_out=usage_out)
     return {"match": match, "trace": _trace(state, "matcher", (time.perf_counter() - t0) * 1000)}

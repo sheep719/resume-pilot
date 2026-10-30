@@ -57,15 +57,15 @@ async def parse_resume_pdf_via_mcp(pdf_path: str) -> dict:
 
 
 async def _fallback(pdf_path: str) -> dict:
-    """进程内直调（老路径，MCP 不可用时的兜底）"""
+    """进程内直调（老路径，MCP 不可用时的兜底）；按扩展名路由 PDF/DOCX 解析器"""
     sys.path.insert(0, str(_TOOLS_DIR))
     from app.agents.parser_agent import parse_resume
-    from app.pdf import NotTextPDFError, extract_pdf
+    from app.pdf import NotTextPDFError, UnsupportedFileError, extract_document
 
     raw = Path(pdf_path).read_bytes()
     try:
-        extracted = extract_pdf(raw)
-    except NotTextPDFError as exc:
+        extracted = extract_document(Path(pdf_path).name, raw)
+    except (NotTextPDFError, UnsupportedFileError) as exc:
         raise RuntimeError(str(exc)) from exc
     resume = await parse_resume(extracted.text)
     return {"ok": True, "pages": extracted.pages, "warnings": extracted.warnings, "resume": resume}
