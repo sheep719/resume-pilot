@@ -148,6 +148,9 @@ services:
     # minio 官方已退出 Docker Hub；cgr.dev 国内服务器拉不通。
     # bitnami/minio 在 docker.io（走腾讯云镜像加速器），env 变量完全兼容。
     image: docker.io/bitnami/minio:latest
+    # bitnami 默认非 root（UID 1001）跑，无法写 root 拥有的 named volume；用 root 启动，
+    # bitnami 入口脚本内部自动降权（安全无影响），官方支持
+    user: root
     command: server /data --address ":9000"
     environment:
       MINIO_ROOT_USER: minio
