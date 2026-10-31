@@ -7,7 +7,7 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
-      FRONTEND_URL: http://localhost:3080
+      FRONTEND_URL: ${FRONTEND_URL:-http://frontend:3000}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
@@ -23,11 +23,16 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # 构建时烘焙进 rewrites（destination 在 build 时固化进 routes-manifest）
+        BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
     ports:
       - "3080:3000"
     environment:
-      NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+      # /api/health 路由在运行时 fetch 后端（process.env 运行时求值）
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -59,11 +64,24 @@ services:
       CLICKHOUSE_USER: clickhouse
       CLICKHOUSE_PASSWORD: clickhouse
       CLICKHOUSE_CLUSTER_ENABLED: "false"
-      NEXTAUTH_URL: http://localhost:3001
-      NEXTAUTH_SECRET: langfuse-secret-change-me
-      SALT: langfuse-salt-change-me
-      ENCRYPTION_KEY: 4cccd4c6cc16498d4a7814a2a4fdd6197a496a7db5f36d0e34c82b902f9e0e69
+      # 生产改法（不改代码）：把这四个变量放 docker-compose 同级 .env 里
+      # NEXTAUTH_URL 必须是浏览器能访问的地址（云部署时用服务器公网地址）
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-langfuse-secret-change-me}
+      SALT: ${SALT:-langfuse-salt-change-me}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-4cccd4c6cc16498d4a7814a2a4fdd6197a496a7db5f36d0e34c82b902f9e0e69}
       TELEMETRY_ENABLED: "false"
+      # 自动初始化（Langfuse 3 原生支持）：启动即建好组织/项目/用户/API key，
+      # 免去 UI 手工配置。backend 的 .env 用同一组 key（部署脚本从同级 .env 读取）
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-resumepilot-org}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-ResumePilot}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-resume-pilot}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-resume-pilot}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@resumepilot.local}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-admin1234}
       # S3（MinIO）事件/媒体存储——langfuse:3 必需
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
       LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
@@ -124,17 +142,20 @@ services:
     restart: unless-stopped
 
   minio:
-    # minio 官方已退出 Docker Hub；cgr.dev 是 langfuse 官方 compose 同款来源
-    image: cgr.dev/chainguard/minio:latest
-    entrypoint: /bin/sh
-    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" /data'
+    # minio 官方已退出 Docker Hub；cgr.dev 国内服务器拉不通。
+    # bitnami/minio 在 docker.io（走腾讯云镜像加速器），env 变量完全兼容。
+    image: docker.io/bitnami/minio:latest
+    command: server /data --address ":9000"
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: miniosecret
+      # bitnami 特性：启动时自动创建 bucket（免去手动 mkdir 预建）
+      MINIO_DEFAULT_BUCKETS: langfuse
     volumes:
       - langfuse-minio:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # bitnami 镜像无 mc 客户端；用官方 /minio/health/live 就绪端点
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -5,14 +5,19 @@ RUN npm ci --registry=https://registry.npmmirror.com --no-audit --no-fund
 
 FROM node:22-alpine AS build
 WORKDIR /app
+# standalone 模式下 rewrites 的 destination 是构建时固化进 routes-manifest 的，
+# 所以 BACKEND_URL 必须通过 build arg 传入（docker-compose 的 environment 进不了构建阶段）。
+# 本地开发默认 127.0.0.1:8000；云上 compose 传 http://backend:8000（容器互联 DNS）
+ARG BACKEND_URL=http://127.0.0.1:8000
+ENV NEXT_TELEMETRY_DISABLED=1 BACKEND_URL=$BACKEND_URL
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+# HOSTNAME=0.0.0.0：standalone server.js 默认只绑 localhost，容器外不可达
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
