@@ -99,6 +99,26 @@ def _get_analysis(analysis_id: int) -> dict | None:
         return d
 
 
+def _get_stats() -> dict:
+    """体验版使用统计：用量/分数分布/独立访客数（公网开放后的产品数据观察口）"""
+    with _conn() as conn:
+        total = conn.execute("SELECT COUNT(*) AS c FROM analyses").fetchone()["c"]
+        last_24h = conn.execute(
+            "SELECT COUNT(*) AS c FROM analyses WHERE created_at > ?",
+            (time.time() - 86400,),
+        ).fetchone()["c"]
+        avg = conn.execute("SELECT AVG(total_score) AS a FROM analyses").fetchone()["a"]
+        sessions = conn.execute(
+            "SELECT COUNT(DISTINCT session_id) AS c FROM analyses"
+        ).fetchone()["c"]
+        return {
+            "total_analyses": total,
+            "last_24h": last_24h,
+            "avg_score": round(avg, 1) if avg else 0,
+            "unique_sessions": sessions,
+        }
+
+
 # ---- 异步包装（FastAPI 事件循环友好） ----
 async def save_analysis(**kwargs) -> int:
     return await asyncio.to_thread(_save, **kwargs)
@@ -110,3 +130,7 @@ async def list_history(session_id: str, limit: int = 20) -> list[dict]:
 
 async def get_analysis(analysis_id: int) -> dict | None:
     return await asyncio.to_thread(_get_analysis, analysis_id)
+
+
+async def get_stats() -> dict:
+    return await asyncio.to_thread(_get_stats)

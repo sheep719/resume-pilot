@@ -12,11 +12,11 @@ import uuid
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from app import db, observability, parse_cache
+from app import db, observability, parse_cache, rate_limit
 from app.agents.matcher_agent import match_jd
 from app.agents.parser_agent import parse_resume
 from app.config import settings
@@ -208,6 +208,7 @@ async def analyze(req: AnalyzeRequest):
 
 @app.post("/api/analyze/stream")
 async def analyze_stream(
+    request: Request,
     jd_text: str = Form(...),
     file: UploadFile | None = File(None),
     resume: str | None = Form(None),
@@ -228,6 +229,15 @@ async def analyze_stream(
         raise HTTPException(400, "需要上传 PDF 文件或提供已解析的 resume JSON")
     if len(jd_text) > 20_000:
         raise HTTPException(413, "岗位 JD 过长（2 万字符上限）——请粘贴核心职责与要求部分")
+
+    # 限流：公网开放访问的必备防线（防 LLM 额度被刷）。
+    # 前端 rewrites 代理后的真实客户端 IP 在 X-Forwarded-For 第一个值。
+    client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                 or (request.client.host if request.client else "unknown"))
+    reject = rate_limit.check(client_ip)
+    if reject:
+        raise HTTPException(429, reject)
+    rate_limit.record(client_ip)
 
     if file is not None:
         name = (file.filename or "").lower()
@@ -405,3 +415,11 @@ async def history_detail(analysis_id: int):
     if not d:
         raise HTTPException(404, "记录不存在")
     return d
+
+
+@app.get("/api/stats")
+async def stats():
+    """使用统计（公开安全：只有聚合计数，无个体数据）"""
+    s = await db.get_stats()
+    s["remaining_today"] = rate_limit.remaining_today()
+    return s

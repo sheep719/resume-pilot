@@ -227,6 +227,15 @@ export default function ResultPage() {
 
           {/* 历史记录（组件自带标题与上边距） */}
           <HistoryPanel />
+
+          {/* 体验版说明：克制的陪伴提示 */}
+          <footer className="animate-fade-in mt-10 border-t border-gray-100 pt-5 text-center">
+            <p className="text-xs leading-relaxed text-gray-400">
+              ResumePilot 体验版 · 分析结果仅供参考，投递前请人工复核
+              <br />
+              使用感受或建议欢迎反馈给分享者
+            </p>
+          </footer>
         </>
       )}
     </main>
