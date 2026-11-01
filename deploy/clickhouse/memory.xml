@@ -1,0 +1,10 @@
+<clickhouse>
+    <!-- 2G 内存服务器适配：ClickHouse 默认按宿主机 RAM 的 90% 规划内存
+         （2G 机器上它敢吃 1.8G），必须把内部规划上限压下来。
+         max_server_memory_usage 是硬上限（字节），查询超此值会被拒绝而不是拖垮系统。 -->
+    <max_server_memory_usage>402653184</max_server_memory_usage> <!-- 384MB -->
+    <max_server_memory_usage_to_ram_ratio>0.2</max_server_memory_usage_to_ram_ratio>
+    <!-- 后台合并线程数减半（默认 8，小机器上 CPU/内存都吃不消） -->
+    <background_pool_size>4</background_pool_size>
+    <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>
+</clickhouse>

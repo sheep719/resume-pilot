@@ -1,3 +1,10 @@
+# ResumePilot 全栈编排（2G 内存服务器适配版）
+#
+# 内存预算（mem_limit 上限，非常驻值）：
+#   backend 384M + frontend 160M + langfuse-web 448M + worker 256M
+#   + clickhouse 512M + postgres 256M + redis 64M + minio 128M ≈ 2.2G
+# 容器超限会被 OOM-kill 并自动重启（restart: unless-stopped），
+# 不再拖垮整个系统（2G RAM + 2G swap 的总池子足够）。
 services:
   backend:
     build:
@@ -15,6 +22,7 @@ services:
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
       LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-}
+      MALLOC_ARENA_MAX: "2"  # 抑制 glibc 内存碎片（Python 进程多线程场景的实测手段）
     volumes:
       - resumepilot-data:/app/data
     healthcheck:
@@ -23,6 +31,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    mem_limit: 384m
     restart: unless-stopped
 
   frontend:
@@ -36,12 +45,14 @@ services:
     environment:
       # /api/health 路由在运行时 fetch 后端（process.env 运行时求值）
       BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+      NODE_OPTIONS: --max-old-space-size=96  # Next standalone 运行时堆上限
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+    mem_limit: 160m
     restart: unless-stopped
     depends_on:
       - backend
@@ -103,6 +114,8 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_AUTH: myredissecret
+      NODE_OPTIONS: --max-old-space-size=384  # Next.js 应用，默认按宿主机内存分配堆会爆
+    mem_limit: 448m
     restart: unless-stopped
 
   langfuse-worker:
@@ -116,7 +129,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    environment: *langfuse-env
+    environment:
+      <<: *langfuse-env
+      NODE_OPTIONS: --max-old-space-size=192  # worker 只处理队列事件，堆需求小
+    mem_limit: 256m
     restart: unless-stopped
 
   clickhouse:
@@ -127,21 +143,26 @@ services:
       CLICKHOUSE_PASSWORD: clickhouse
     volumes:
       - langfuse-clickhouse:/var/lib/clickhouse
+      # 关键：ClickHouse 默认按宿主机 RAM 的 90% 规划内存（2G 机器上会试图吃 1.8G），
+      # 必须挂配置把上限压到 384MB——否则一启动就把系统拖进 OOM
+      - ./deploy/clickhouse/memory.xml:/etc/clickhouse-server/users.d/memory.xml:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 30
+    mem_limit: 512m
     restart: unless-stopped
 
   redis:
     image: docker.io/redis:7
-    command: --requirepass myredissecret --maxmemory-policy noeviction
+    command: --requirepass myredissecret --maxmemory-policy noeviction --maxmemory 48mb
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "myredissecret", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 64m
     restart: unless-stopped
 
   minio:
@@ -165,6 +186,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 128m
     restart: unless-stopped
 
   postgres:
@@ -173,6 +195,13 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: langfuse
+    # 默认配置按共享库标准调优（shared_buffers 512MB），2G 服务器上必须压小
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c effective_cache_size=192MB
+      -c work_mem=4MB
+      -c max_connections=30
     volumes:
       - langfuse-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -180,6 +209,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+    mem_limit: 256m
     restart: unless-stopped
 
 volumes:

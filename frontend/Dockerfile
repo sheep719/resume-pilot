@@ -9,7 +9,8 @@ WORKDIR /app
 # 所以 BACKEND_URL 必须通过 build arg 传入（docker-compose 的 environment 进不了构建阶段）。
 # 本地开发默认 127.0.0.1:8000；云上 compose 传 http://backend:8000（容器互联 DNS）
 ARG BACKEND_URL=http://127.0.0.1:8000
-ENV NEXT_TELEMETRY_DISABLED=1 BACKEND_URL=$BACKEND_URL
+# build 内存上限：Next build 峰值轻松 1.5G+，小内存服务器上必须压住堆（宁可慢，不能 OOM）
+ENV NEXT_TELEMETRY_DISABLED=1 BACKEND_URL=$BACKEND_URL NODE_OPTIONS=--max-old-space-size=1024
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
