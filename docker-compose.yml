@@ -5,6 +5,14 @@
 #   + clickhouse 512M + postgres 256M + redis 64M + minio 128M ≈ 2.2G
 # 容器超限会被 OOM-kill 并自动重启（restart: unless-stopped），
 # 不再拖垮整个系统（2G RAM + 2G swap 的总池子足够）。
+
+# 日志轮转（json-file 默认无上限，长期运行磁盘必爆）
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   backend:
     build:
@@ -12,7 +20,9 @@ services:
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}
     ports:
-      - "8000:8000"
+      # 只绑本机回环：后端 API 不公网暴露（公网流量走 frontend:3080 的 rewrites 代理）
+      # 无鉴权的 LLM 端口直接暴露公网 = 公开钱包
+      - "127.0.0.1:8000:8000"
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
@@ -32,6 +42,7 @@ services:
       retries: 3
       start_period: 15s
     mem_limit: 384m
+    logging: *default-logging
     restart: unless-stopped
 
   frontend:
@@ -53,6 +64,7 @@ services:
       retries: 3
       start_period: 10s
     mem_limit: 160m
+    logging: *default-logging
     restart: unless-stopped
     depends_on:
       - backend
@@ -116,6 +128,7 @@ services:
       REDIS_AUTH: myredissecret
       NODE_OPTIONS: --max-old-space-size=384  # Next.js 应用，默认按宿主机内存分配堆会爆
     mem_limit: 448m
+    logging: *default-logging
     restart: unless-stopped
 
   langfuse-worker:
@@ -133,6 +146,7 @@ services:
       <<: *langfuse-env
       NODE_OPTIONS: --max-old-space-size=192  # worker 只处理队列事件，堆需求小
     mem_limit: 256m
+    logging: *default-logging
     restart: unless-stopped
 
   clickhouse:
@@ -152,6 +166,7 @@ services:
       timeout: 5s
       retries: 30
     mem_limit: 512m
+    logging: *default-logging
     restart: unless-stopped
 
   redis:
@@ -163,6 +178,7 @@ services:
       timeout: 5s
       retries: 10
     mem_limit: 64m
+    logging: *default-logging
     restart: unless-stopped
 
   minio:
@@ -187,6 +203,7 @@ services:
       timeout: 5s
       retries: 10
     mem_limit: 128m
+    logging: *default-logging
     restart: unless-stopped
 
   postgres:
@@ -210,6 +227,7 @@ services:
       timeout: 5s
       retries: 30
     mem_limit: 256m
+    logging: *default-logging
     restart: unless-stopped
 
 volumes:
