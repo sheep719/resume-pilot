@@ -11,7 +11,7 @@
 [![Next.js](https://img.shields.io/badge/frontend-Next.js%2015-black)]()
 [![Langfuse](https://img.shields.io/badge/observability-Langfuse%20self--hosted-orange)]()
 [![Docker](https://img.shields.io/badge/deploy-Docker%20Compose-2496ED)]()
-[![tests](https://img.shields.io/badge/tests-pytest%2021%2F21%20%2B%2010--JD%20E2E-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-pytest%2028%2F28%20%2B%2010--JD%20E2E-brightgreen)]()
 
 ## 它解决什么问题
 
@@ -114,7 +114,7 @@ curl -N -X POST http://127.0.0.1:8000/api/analyze/stream \
 
 ```bash
 cd backend
-.venv\Scripts\python -m pytest tests/ -q            # 21 个单元测试（stub 模式，零 API 成本）
+.venv\Scripts\python -m pytest tests/ -q            # 28 个单元测试（stub 模式，零 API 成本）
 .venv\Scripts\python -X utf8 tests/run_e2e.py       # 10 组 JD 全流程回归 + 稳定性抽测
 ```
 
@@ -175,7 +175,7 @@ backend/
     llm.py             # LLM 封装：JSON mode / 解析重试 / stub 模式
     schemas.py         # Pydantic 契约 + 评分权重常量
   tools/mcp_server.py  # MCP server（FastMCP）：parse_resume_pdf 工具，独立进程
-  tests/               # pytest 21 例 + run_e2e.py 10-JD 评测回归 + fixtures
+  tests/               # pytest 28 例 + run_e2e.py 10-JD 评测回归 + fixtures
 frontend/
   app/                 # 上传页 / + 结果页 /result
   components/          # ScoreGauge / RadarChart（纯 SVG 零依赖）/ RequirementList / RewriteCard
