@@ -65,7 +65,9 @@ export function AnalysisProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === "undefined") return "ssr";
     let sid = window.localStorage.getItem("rp_session_id");
     if (!sid) {
-      sid = crypto.randomUUID().slice(0, 8);
+      // crypto.randomUUID 只在 Secure Context（HTTPS/localhost）可用；
+      // 纯 HTTP 部署（如内网 IP 直接访问）会抛 TypeError 使整页崩溃——用 Math.random 兜底
+      sid = (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)).slice(0, 8);
       window.localStorage.setItem("rp_session_id", sid);
     }
     return sid;
